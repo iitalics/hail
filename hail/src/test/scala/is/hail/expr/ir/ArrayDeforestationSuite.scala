@@ -33,6 +33,22 @@ class ArrayDeforestationSuite extends HailSuite {
       GetField(Ref("x3", coerce[TArray](array.typ).elementType), "f1"))
   }
 
+  // doubled([a1,a2,...,aN]) = [a1,a1,a2,a2,...,aN,aN]
+  def doubled(array: IR): IR = {
+    val arrayType = coerce[TArray](array.typ)
+    val elemType = arrayType.elementType
+    val value = Ref(genUID(), elemType)
+    ArrayFlatMap(array, value.name,
+      MakeArray(Seq(value, value), arrayType))
+  }
+
+  def removeAbove(array: IR, threshold: IR): IR = {
+    val value = Ref(genUID(), coerce[TIterable](array.typ).elementType)
+    ArrayFilter(array,
+      value.name,
+      value <= threshold)
+  }
+
   def max2(array: IR): IR = {
     val zero = MakeStruct(FastSeq[(String, IR)]("max1" -> -999, "max2" -> -999))
     val accum = Ref(genUID(), zero.typ)
@@ -48,7 +64,7 @@ class ArrayDeforestationSuite extends HailSuite {
   }
 
   def last2(array: IR): IR = {
-    val elemType = array.typ.asInstanceOf[TArray].elementType
+    val elemType = coerce[TIterable](array.typ).elementType
     val zero = MakeTuple.ordered(FastSeq(NA(elemType), NA(elemType)))
     val accum = Ref(genUID(), zero.typ)
     val value = Ref(genUID(), elemType)
@@ -66,6 +82,21 @@ class ArrayDeforestationSuite extends HailSuite {
   @Test def testArrayFoldLast2() {
     assertEvalsTo(last2(primitiveArrayNoRegion(5)), Row(8, 9))
     assertEvalsTo(last2(arrayWithRegion(5)), Row(Row(4, 0), Row(5, 0)))
+  }
+
+  @Test def testArrayFlatMapFoldLast2() {
+    assertEvalsTo(last2(doubled(primitiveArrayWithRegion(5))), Row(5, 5))
+  }
+
+  @Test def testArrayFlatMapCollect() {
+    val n = 100
+    assertEvalsTo(doubled(primitiveArrayWithRegion(n)),
+      (1 to n).flatMap { i => Seq(i, i) })
+  }
+
+  @Test def testArrayFilter() {
+    assertEvalsTo(max2(removeAbove(primitiveArrayWithRegion(8), 4)), Row(4, 3))
+    assertEvalsTo(removeAbove(doubled(primitiveArrayNoRegion(10)), 7), IndexedSeq(5, 5, 6, 6, 7, 7))
   }
 
   @Test def testStreamifyNestedSort() {
