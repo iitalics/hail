@@ -10,18 +10,21 @@ import org.testng.annotations.Test
 class ArrayDeforestationSuite extends HailSuite {
   implicit val execStrats = ExecStrategy.values
 
+  // primitiveArrayNoRegion(len) = "[5, 6, ..., len+4]"
   def primitiveArrayNoRegion(len: IR): IR =
     ArrayMap(
       ArrayRange(0, len, 1),
       "x1",
       Ref("x1", TInt32()) + 5)
 
+  // arrayWithRegion(len) = "[{f1=1,f2=0}, {f1=2,f2=0}, ..., {f1=len,f2=0}]"
   def arrayWithRegion(len: IR): IR =
     ArrayMap(
       ArrayRange(0, len, 1),
       "x2",
       MakeStruct(FastSeq[(String, IR)]("f1" -> (Ref("x2", TInt32()) + 1), "f2" -> 0)))
 
+  // primitiveArrayWithRegion(len) = "[1, 2, ..., len]"
   def primitiveArrayWithRegion(len: IR): IR = {
     val array = arrayWithRegion(len)
     ArrayMap(
@@ -30,12 +33,11 @@ class ArrayDeforestationSuite extends HailSuite {
       GetField(Ref("x3", coerce[TArray](array.typ).elementType), "f1"))
   }
 
-  def arrayFoldWithStructWithPrimitiveValues(len: IR, max1: Int, max2: Int): IR = {
-    val zero = MakeStruct(FastSeq[(String, IR)]("max1" -> max1, "max2" -> max2))
+  def max2(array: IR): IR = {
+    val zero = MakeStruct(FastSeq[(String, IR)]("max1" -> -999, "max2" -> -999))
     val accum = Ref(genUID(), zero.typ)
     val value = Ref(genUID(), TInt32())
-    ArrayFold(
-      primitiveArrayWithRegion(len),
+    ArrayFold(array,
       zero,
       accum.name, value.name,
       If(value > GetField(accum, "max1"),
@@ -45,23 +47,25 @@ class ArrayDeforestationSuite extends HailSuite {
           accum)))
   }
 
-  def arrayFoldWithStruct(len: IR, v1: Int, v2: Int): IR = {
-    val zero = MakeTuple.ordered(FastSeq(
-      MakeStruct(FastSeq[(String, IR)]("f1" -> v1, "f2" -> v2)),
-      MakeStruct(FastSeq[(String, IR)]("f1" -> v1, "f2" -> v2))))
-    val array = arrayWithRegion(len)
+  def last2(array: IR): IR = {
+    val elemType = array.typ.asInstanceOf[TArray].elementType
+    val zero = MakeTuple.ordered(FastSeq(NA(elemType), NA(elemType)))
     val accum = Ref(genUID(), zero.typ)
-    val value = Ref(genUID(), coerce[TArray](array.typ).elementType)
-    ArrayFold(
-      array,
+    val value = Ref(genUID(), elemType)
+    ArrayFold(array,
       zero,
       accum.name, value.name,
       MakeTuple.ordered(FastSeq(GetTupleElement(accum, 1), value)))
   }
 
-  @Test def testArrayFold() {
-    assertEvalsTo(arrayFoldWithStructWithPrimitiveValues(5, -5, -6), Row(5, 4))
-    assertEvalsTo(arrayFoldWithStruct(5, -5, -6), Row(Row(4, 0), Row(5, 0)))
+  @Test def testArrayFoldMax2() {
+    assertEvalsTo(max2(primitiveArrayNoRegion(5)), Row(9, 8))
+    assertEvalsTo(max2(primitiveArrayWithRegion(5)), Row(5, 4))
+  }
+
+  @Test def testArrayFoldLast2() {
+    assertEvalsTo(last2(primitiveArrayNoRegion(5)), Row(8, 9))
+    assertEvalsTo(last2(arrayWithRegion(5)), Row(Row(4, 0), Row(5, 0)))
   }
 
   @Test def testStreamifyNestedSort() {
