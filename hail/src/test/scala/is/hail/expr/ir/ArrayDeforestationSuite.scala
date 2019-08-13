@@ -77,4 +77,18 @@ class ArrayDeforestationSuite extends HailSuite {
         x * 5),
       IndexedSeq(5, 10, 15))
   }
+
+  @Test def testArrayLeftJoin() {
+    val l = Ref(genUID(), TInt32())
+    val r = Ref(genUID(), TInt32())
+    val left = ArrayRange(0, 10, 1)
+    val right = MakeArray(Seq(2, 5, 8), TArray(TInt32()))
+    assertEvalsTo(
+      ArrayLeftJoinDistinct(
+        left, right,
+        l.name, r.name,
+        l - r,
+        If(IsNA(r), l, 0)),
+      IndexedSeq(0, 1, 0, 3, 4, 0, 6, 7, 0, 9))
+  }
 }

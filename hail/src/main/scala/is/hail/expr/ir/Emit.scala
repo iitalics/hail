@@ -1766,13 +1766,15 @@ private class Emit(
         val rv = mb.newField[Long]("join_rarray_v")
         val ri = mb.newField[Int]("join_rarray_i")
         val rlen = mb.newField[Int]("join_rarray_len")
+        val relemm = rtyp.isElementMissing(rv, ri)
+        val relem = Region.loadIRIntermediate(relt.physicalType)(rtyp.elementOffset(rv, rlen, ri))
 
         val lm = mb.newField[Boolean]("join_left_m")
         val lv = mb.newField("join_left_v")(typeToTypeInfo(lelt))
 
         val fenv = env.bind(
           (l, (typeToTypeInfo(lelt), lm.load(), lv.load())),
-          (r, (typeToTypeInfo(relt), rm.load() || rtyp.isElementMissing(region, rv, ri), rtyp.loadElement(region, rv, ri))))
+          (r, (typeToTypeInfo(relt), rm.load() || relemm, relem)))
 
         val compKeyF = mb.fb.newMethod(typeInfo[Region], typeInfo[Int])
         val et = new Emit(compKeyF, 1).emit(compKey, fenv, er, container)
@@ -1791,7 +1793,7 @@ private class Emit(
               cont(
                 lm.load(),
                 ((ri < rlen) && coerce[Int](compKeyF.invoke(region)).ceq(0)).mux(
-                  joinF.invoke(region, rtyp.loadElement(region, rv, ri), rm.load() || rtyp.isElementMissing(region, rv, ri)),
+                  joinF.invoke(region, relem, rm.load() || relemm),
                   joinF.invoke(region, defaultValue(relt), true))))
           }
           val setup = Code(
