@@ -568,12 +568,12 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
              |    $accv = ${ zerot.v };
              |  ${ ae.setupLen }
              |  ${
-            ae.emit { case (m, v) =>
+            ae.consume { case (m, v) =>
               val vm = fb.variable("vm", "bool")
               val vv = fb.variable("vv", typeToCXXType(eltType))
               val vt = EmitTriplet(eltType, "", vm.toString, vv.toString, ae.arrayRegion)
 
-              val bodyt = emit(body, env.bind(accumName -> acct, valueName -> vt))
+              val bodyt = this.emit(resultRegion, body, env.bind(accumName -> acct, valueName -> vt))
 
               // necessary because bodyt.v could be accm
               val bodym = fb.variable("bodym", "bool", bodyt.m)
@@ -617,7 +617,7 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
                    |  ${ ae.setupLen }
                    |  ${ sab.start(length) }
                    |  ${
-                  ae.emit { case (m, v) =>
+                  ae.consume { case (m, v) =>
                     s"""
                        |if (${ m })
                        |  ${ sab.setMissing() }
@@ -642,7 +642,7 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
                    |  ${ xs.define }
                    |  ${ ms.define }
                    |  ${
-                  ae.emit { case (m, v) =>
+                  ae.consume { case (m, v) =>
                     s"""
                        |if (${ m }) {
                        |  $ms.push_back(true);
@@ -695,7 +695,7 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
           s"""{
              |${ sorter.define }
              |${ array.setupLen }
-             |${ array.emit { (m, v) => s"if ($m) { $sorter.add_missing(); } else { $sorter.add_element($v); }" } }
+             |${ array.consume { (m, v) => s"if ($m) { $sorter.add_missing(); } else { $sorter.add_element($v); }" } }
              |$sorter.sort();
              |$sorter.to_region($resultRegion);
              |}
@@ -754,7 +754,7 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
           s"""{
              |${ sorter.define }
              |${ array.setupLen }
-             |${ array.emit { (m, v) => s"if ($m) { $sorter.add_missing(); } else { $sorter.add_element($v); }" } }
+             |${ array.consume { (m, v) => s"if ($m) { $sorter.add_missing(); } else { $sorter.add_element($v); }" } }
              |$sorter.sort();
              |$sorter.distinct<${ eqClass.name }>($removeMissing);
              |$sorter.to_region($resultRegion);
@@ -1095,221 +1095,57 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
 
   def emit(x: ir.IR, env: E): EmitTriplet =
     emit(ctx.region, x, env)
+
   def emitStream(resultRegion: EmitRegion, x: ir.IR, env: E, sameRegion: Boolean): ArrayEmitter = {
     assert(x.typ.isInstanceOf[TStream])
-    val elemType = coerce[PStream](x.pType).elementType
+    val streamType = coerce[PStream](x.pType)
+    val elemType = streamType.elementType
 
     x match {
       case ir.StreamRange(start, stop, step) =>
-        fb.translationUnitBuilder().include("<limits.h>")
-        val startt = emit(resultRegion, start, env)
-        val stopt = emit(resultRegion, stop, env)
-        val stept = emit(resultRegion, step, env)
-
-        val startv = fb.variable("start", "int", startt.v)
-        val stopv = fb.variable("stop", "int", stopt.v)
-        val stepv = fb.variable("step", "int", stept.v)
-
-        val len = fb.variable("len", "int")
-        val llen = fb.variable("llen", "long")
-
-        val s = StringEscapeUtils.escapeString(ir.Pretty.short(x))
-
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
-        new ArrayEmitter(
-          s"""
-             |${ startt.setup }
-             |${ stopt.setup }
-             |${ stept.setup }
-             |""".stripMargin,
-          s"(${ startt.m } || ${ stopt.m } || ${ stept.m })",
-          s"""
-             |${ startv.define }
-             |${ stopv.define }
-             |${ stepv.define }
-             |${ len.define }
-             |${ llen.define }
-             |if ($stepv == 0) {
-             |  ${ fb.nativeError("Array range step size cannot be 0.  IR: %s".format(s)) }
-             |} else if ($stepv < 0)
-             |  $llen = ($startv <= $stopv) ? 0l : ((long)$startv - (long)$stopv - 1l) / (long)(-$stepv) + 1l;
-             |else
-             |  $llen = ($startv >= $stopv) ? 0l : ((long)$stopv - (long)$startv - 1l) / (long)$stepv + 1l;
-             |if ($llen > INT_MAX) {
-             |  ${ fb.nativeError("Array range cannot have more than INT_MAX elements.  IR: %s".format(s)) }
-             |} else
-             |  $len = ($llen < 0) ? 0 : (int)$llen;
-             |""".stripMargin, Some(len.toString), arrayRegion) {
+        ArrayEmitter.range(fb, arrayRegion, sameRegion, x,
+          emit(resultRegion, start, env),
+          emit(resultRegion, stop, env),
+          emit(resultRegion, step, env))
 
-          def emit(f: (Code, Code) => Code): Code = {
-            val i = fb.variable("i", "int", "0")
-            val v = fb.variable("v", "int", startv.toString)
-            s"""
-               |${ v.define }
-               |for (${ i.define } $i < $len; ++$i) {
-               |  ${ arrayRegion.defineIfUsed(sameRegion) }
-               |  ${ f("false", v.toString) }
-               |  $v += $stepv;
-               |}
-               |""".stripMargin
-          }
-        }
-
-      case x@ir.MakeStream(args, t) =>
+      case ir.MakeStream(args, t) =>
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
-        val triplets = args.map { arg => outer.emit(arrayRegion, arg, env) }
-        new ArrayEmitter("", "false", "", Some(args.length.toString), arrayRegion) {
-          def emit(f: (Code, Code) => Code): Code = {
-            val sb = new ArrayBuilder[Code]
-            val m = fb.variable("argm", "bool")
-            val v = fb.variable("argv", typeToCXXType(x.pType.asInstanceOf[PStream].elementType))
-            val cont = f(m.toString, v.toString)
+        ArrayEmitter.fromTriplets(fb, arrayRegion, sameRegion, elemType,
+          args.map(emit(arrayRegion, _, env)))
 
-            triplets.foreach { argt =>
-              sb +=
-                s"""
-                   |{
-                   |${ arrayRegion.defineIfUsed(sameRegion) }
-                   |${ argt.setup }
-                   |${ m.defineWith(argt.m) }
-                   |${ v.defineWith(argt.v) }
-                   |$cont
-                   |}
-                 """.stripMargin
-            }
-            sb.result().mkString
-          }
-        }
+      case ir.ToStream(array) =>
+        val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
+        //val arrayType = coerce[PStreamable](array.pType).asPArray
+        ArrayEmitter.fromContainer(fb, arrayRegion, sameRegion,
+          emit(resultRegion, array, env))
 
       case ir.ArrayFilter(a, name, cond) =>
         val ae = emitStream(resultRegion, a, env, sameRegion)
-        val arrayRegion = ae.arrayRegion
-        val vm = fb.variable("m", "bool")
-        val vv = fb.variable("v", typeToCXXType(elemType))
-        val condt = outer.emit(arrayRegion, cond,
-          env.bind(name, EmitTriplet(elemType, "", vm.toString, vv.toString, arrayRegion)))
-
-        new ArrayEmitter(ae.setup, ae.m, ae.setupLen, None, arrayRegion) {
-          def emit(f: (Code, Code) => Code): Code = {
-            ae.emit { (m2: Code, v2: Code) =>
-              s"""
-                 |{
-                 |  ${ vm.define }
-                 |  ${ vv.define }
-                 |  $vm = $m2;
-                 |  if (!$vm)
-                 |    $vv = $v2;
-                 |  ${ condt.setup }
-                 |  if (!${ condt.m } && ${ condt.v }) {
-                 |    ${ f(vm.toString, vv.toString) }
-                 |  }
-                 |}
-                 |""".stripMargin
-            }
-          }
+        ae.filter(fb) { triplet =>
+          emit(ae.arrayRegion, cond, env.bind(name, triplet))
         }
 
       case ir.ArrayMap(a, name, body) =>
-        val aElementPType = a.pType.asInstanceOf[PStreamable].elementType
         val ae = emitStream(resultRegion, a, env, sameRegion)
-        val arrayRegion = ae.arrayRegion
-
-        val vm = fb.variable("m", "bool")
-        val vv = fb.variable("v", typeToCXXType(aElementPType))
-        val bodyt = outer.emit(arrayRegion, body,
-          env.bind(name, EmitTriplet(aElementPType, "", vm.toString, vv.toString, arrayRegion)))
-
-        new ArrayEmitter(ae.setup, ae.m, ae.setupLen, ae.length, arrayRegion) {
-          def emit(f: (Code, Code) => Code): Code = {
-            ae.emit { (m2: Code, v2: Code) =>
-              s"""
-                 |{
-                 |  ${ vm.define }
-                 |  ${ vv.define }
-                 |  $vm = $m2;
-                 |  if (!$vm)
-                 |    $vv = $v2;
-                 |  ${ bodyt.setup }
-                 |  ${ f(bodyt.m, bodyt.v) }
-                 |}
-                 |""".stripMargin
-            }
-          }
+        ae.map(fb) { triplet =>
+          emit(ae.arrayRegion, body, env.bind(name, triplet))
         }
 
       case ir.ArrayFlatMap(a, name, body) =>
-        val aElementPType = a.pType.asInstanceOf[PStreamable].elementType
-
         val ae = emitStream(resultRegion, a, env, sameRegion)
-        val arrayRegion = ae.arrayRegion
-
-        val vm = fb.variable("m", "bool")
-        val vv = fb.variable("v", typeToCXXType(aElementPType))
-        val bodyt = outer.emitStream(arrayRegion, body,
-          env.bind(name, EmitTriplet(aElementPType, "", vm.toString, vv.toString, arrayRegion)), sameRegion)
-
-        new ArrayEmitter(ae.setup, ae.m, ae.setupLen, None, bodyt.arrayRegion) {
-          def emit(f: (Code, Code) => Code): Code = {
-            ae.emit { (m2: Code, v2: Code) =>
-              s"""
-                 |{
-                 |  ${ vm.define }
-                 |  ${ vv.define }
-                 |  $vm = $m2;
-                 |  if (!$vm)
-                 |    $vv = $v2;
-                 |  ${ bodyt.setup }
-                 |  if (!${ bodyt.m }) {
-                 |    ${ bodyt.setupLen }
-                 |    ${ bodyt.emit(f) }
-                 |  }
-                 |}
-                 |""".stripMargin
-            }
-          }
+        ae.flatMap(fb) { triplet =>
+          emitStream(ae.arrayRegion, body, env.bind(name, triplet),
+            sameRegion = sameRegion /* FIXME: i think sameRegion = true here? ... */
+          )
         }
 
       case ir.Let(name, value, body) =>
         val vt = emit(resultRegion, value, env).memoize(fb)
         val bodyEnv = env.bind(name, EmitTriplet(value.pType, "", vt.m, vt.v, resultRegion))
-        val ae = emitStream(resultRegion, body, bodyEnv, sameRegion)
+        emitStream(resultRegion, body, bodyEnv, sameRegion)
+          .withSetup(vt.setup)
 
-        val setup =
-          s"""
-             |${ vt.setup }
-             |${ ae.setup }
-           """.stripMargin
-
-        new ArrayEmitter(setup, ae.m, ae.setupLen, None, ae.arrayRegion) {
-          def emit(f: (Code, Code) => Code): Code = ae.emit(f)
-        }
-
-      case ir.ToStream(array) =>
-        val pArray = coerce[PStreamable](array.pType).asPArray
-        val t = emit(resultRegion, array, env)
-        val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
-
-        val a = fb.variable("a", "const char *", t.v)
-        val len = fb.variable("len", "int", pArray.cxxLoadLength(a.toString))
-        new ArrayEmitter(t.setup, t.m,
-          s"""
-             |${ a.define }
-             |${ len.define }
-             |""".stripMargin, Some(len.toString), arrayRegion) {
-          val i = fb.variable("i", "int", "0")
-
-          def emit(f: (Code, Code) => Code): Code = {
-            s"""
-               |for (${ i.define } $i < $len; ++$i) {
-               |  ${ arrayRegion.defineIfUsed(sameRegion) }
-               |  ${
-              f(pArray.cxxIsElementMissing(a.toString, i.toString),
-                loadIRIntermediate(pArray.elementType, pArray.cxxElementAddress(a.toString, i.toString)))
-            }
-               |}
-               |""".stripMargin
-          }
-        }
       case _ =>
         throw new CXXUnsupportedOperation(ir.Pretty(x))
     }
