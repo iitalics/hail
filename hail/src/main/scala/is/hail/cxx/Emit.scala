@@ -691,7 +691,7 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
         val sorter = fb.variable("sorter", aType.asPArray.cxxArraySorter(ltClass.name), s"{ }")
         resultRegion.use()
 
-        EmitTriplet(aType, array.setup, array.m,
+        EmitTriplet(aType.asPArray, array.setup, array.m,
           s"""{
              |${ sorter.define }
              |${ array.setupLen }
