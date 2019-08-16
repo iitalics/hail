@@ -1104,10 +1104,15 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
     x match {
       case ir.StreamRange(start, stop, step) =>
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
-        ArrayEmitter.range(fb, arrayRegion, sameRegion, x,
-          emit(resultRegion, start, env),
-          emit(resultRegion, stop, env),
-          emit(resultRegion, step, env))
+        if (start == ir.I32(0) && step == ir.I32(1)) {
+          println("using pull stream for simple range()")
+          PullStreamEmitter.range(fb, emit(resultRegion, stop, env))
+            .toArrayEmitter(arrayRegion, sameRegion)
+        } else
+          ArrayEmitter.range(fb, arrayRegion, sameRegion, x,
+            emit(resultRegion, start, env),
+            emit(resultRegion, stop, env),
+            emit(resultRegion, step, env))
 
       case ir.MakeStream(args, t) =>
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
