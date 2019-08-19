@@ -105,6 +105,46 @@ abstract class PullStreamEmitter(
       def step(elem: Continuation, eos: Continuation): Code = self.step(mapElemCont(elem), eos)
     }
   }
+
+  def filter(f: (Code, Code) => EmitTriplet): PullStreamEmitter = {
+    new PullStreamEmitter(fb, pType, setup, m) {
+      def mkFilter(elem: Continuation, eos: Continuation): (AssignAndJump, Code) = {
+        val filt = Continuation(fb, "filter", "vm" -> PBooleanRequired, "vv" -> elemType)
+        val vm = filt.vars(0).toString
+        val vv = filt.vars(1).toString
+        val condt = f(vm, vv)
+        assert(condt.pType isOfType PBoolean())
+        val body =
+          s"""
+             |${condt.setup}
+             |if (!${condt.m} && ${condt.v}) {
+             |  ${elem(vm, vv)}
+             |} else {
+             |  ${self.step(filt, eos)}
+             |}
+           """.stripMargin
+        (filt, body)
+      }
+
+      def init(elem: Continuation, eos: Continuation): Code = {
+        val (filt, filtBody) = mkFilter(elem, eos)
+        s"""
+           |${filt.setup}
+           |${self.init(filt, eos)}
+           |${filt.label}: $filtBody
+         """.stripMargin
+      }
+
+      def step(elem: Continuation, eos: Continuation): Code = {
+        val (filt, filtBody) = mkFilter(elem, eos)
+        s"""
+           |${filt.setup}
+           |${self.step(filt, eos)}
+           |${filt.label}: $filtBody
+         """.stripMargin
+      }
+    }
+  }
 }
 
 object PullStreamEmitter {
@@ -118,6 +158,11 @@ object PullStreamEmitter {
     override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ToArrayEmitter =
       stream.map { (m, v) =>
         f(EmitTriplet(stream.elemType, "", m, v, arrayRegion))
+      }.toArrayEmitter(arrayRegion, sameRegion)
+
+    override def filter(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ToArrayEmitter =
+      stream.filter { (m, v) =>
+        f(EmitTriplet(PBooleanOptional, "", m, v, arrayRegion))
       }.toArrayEmitter(arrayRegion, sameRegion)
   }
 
