@@ -16,8 +16,15 @@ abstract class Continuation(
     call(args)
   }
 
-  def mapArgs(f: Seq[Code] => Seq[Code]) = new Continuation(setup, numArgs) {
-    def call(args: Seq[Code]) = self.call(f(args))
+  def mapArgs(f: Seq[Code] => (Code, Seq[Code])) = new Continuation(setup, numArgs) {
+    def call(args: Seq[Code]) = {
+      val (setup, newArgs) = f(args)
+      s"""{
+         |$setup
+         |${self.call(newArgs)}
+         |}
+       """.stripMargin
+    }
   }
 }
 
@@ -74,17 +81,44 @@ abstract class PullStreamEmitter(
 
   def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean) =
     new PullStreamEmitter.ToArrayEmitter(this, arrayRegion, sameRegion)
+
+  def map(f: (Code, Code) => EmitTriplet): PullStreamEmitter = {
+    val vm = fb.variable("eltm", "bool")
+    val vv = fb.variable("eltv", typeToCXXType(elemType))
+    val body = f(vm.toString, vv.toString)
+    new PullStreamEmitter(fb, PStream(body.pType, pType.required), setup, m) {
+      def mapElemCont(c: Continuation): Continuation =
+        c.mapArgs { args =>
+          val setup =
+            s"""
+             |${vm.define}
+             |${vv.define}
+             |$vm = ${args(0)};
+             |if(!$vm)
+             |  $vv = ${args(1)};
+             |${body.setup}
            """.stripMargin
+          (setup, Seq(body.m, body.v))
         }
+
+      def init(elem: Continuation, eos: Continuation): Code = self.init(mapElemCont(elem), eos)
+      def step(elem: Continuation, eos: Continuation): Code = self.step(mapElemCont(elem), eos)
     }
+  }
 }
 
 object PullStreamEmitter {
 
-  class ToArrayEmitter(val stream: PullStreamEmitter, arrayRegion: EmitRegion, val sameRegion: Boolean)
+  class ToArrayEmitter(stream: PullStreamEmitter, arrayRegion: EmitRegion, sameRegion: Boolean)
       extends ArrayEmitter(stream.pType, stream.setup, stream.m, "", None, arrayRegion) {
+
     def consume(f: (Code, Code) => Code): Code =
       stream.consume(f, arrayRegion.defineIfUsed(sameRegion))
+
+    override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ToArrayEmitter =
+      stream.map { (m, v) =>
+        f(EmitTriplet(stream.elemType, "", m, v, arrayRegion))
+      }.toArrayEmitter(arrayRegion, sameRegion)
   }
 
   class Empty(fb: FunctionBuilder, pType: PStream)
