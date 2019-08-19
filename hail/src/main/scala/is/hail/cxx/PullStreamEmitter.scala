@@ -50,7 +50,7 @@ abstract class PullStreamEmitter(
   def init(elem: Continuation, eos: Continuation): Code
   def step(elem: Continuation, eos: Continuation): Code
 
-  def consume(f: (Code, Code) => Code): Code = {
+  def consume(f: (Code, Code) => Code, iterSetup: Code): Code = {
     val loop = Continuation(fb, "loop", "eltm" -> PBooleanRequired, "eltv" -> elemType)
     val eltm = loop.vars(0)
     val eltv = loop.vars(1)
@@ -58,27 +58,34 @@ abstract class PullStreamEmitter(
     s"""
        |${loop.setup}
        |${done.setup}
-       |${init(loop, done)}
+       |{
+       |  $iterSetup
+       |  ${init(loop, done)}
+       |}
        |${loop.label}:
-       |${f(eltm.toString(), eltv.toString())}
-       |${step(loop, done)}
+       |{
+       |  $iterSetup
+       |  ${f(eltm.toString(), eltv.toString())}
+       |  ${step(loop, done)}
+       |}
        |${done.label}:;
      """.stripMargin
   }
 
-  def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter =
-    new ArrayEmitter(pType, setup, m, "", None, arrayRegion) {
-      def consume(f: (Code, Code) => Code): Code =
-        self.consume { (m, v) =>
-          s"""
-             |${arrayRegion.defineIfUsed(sameRegion)}
-             |${f(m, v)}
+  def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean) =
+    new PullStreamEmitter.ToArrayEmitter(this, arrayRegion, sameRegion)
            """.stripMargin
         }
     }
 }
 
 object PullStreamEmitter {
+
+  class ToArrayEmitter(val stream: PullStreamEmitter, arrayRegion: EmitRegion, val sameRegion: Boolean)
+      extends ArrayEmitter(stream.pType, stream.setup, stream.m, "", None, arrayRegion) {
+    def consume(f: (Code, Code) => Code): Code =
+      stream.consume(f, arrayRegion.defineIfUsed(sameRegion))
+  }
 
   class Empty(fb: FunctionBuilder, pType: PStream)
       extends PullStreamEmitter(fb, pType, "", m = "false") {
