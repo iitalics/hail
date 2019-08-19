@@ -190,4 +190,18 @@ object PullStreamEmitter {
          """.stripMargin
     }
   }
+
+  def fromContainer(fb: FunctionBuilder, container: EmitTriplet): PullStreamEmitter = {
+    val a = container.memoize(fb)
+    val atyp = coerce[PContainer](container.pType)
+    val len = atyp.cxxLoadLength(a.v)
+    val lent = EmitTriplet(PInt32(atyp.required), a.setup, a.m, len, region = null)
+    range(fb, lent).map { (_, i) =>
+      EmitTriplet(atyp.elementType,
+        "",
+        atyp.cxxIsElementMissing(a.v, i),
+        loadIRIntermediate(atyp.elementType, atyp.cxxElementAddress(a.v, i)),
+        region = null)
+    }
+  }
 }

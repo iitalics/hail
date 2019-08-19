@@ -137,4 +137,19 @@ class ArrayDeforestationSuite extends HailSuite {
     assertEvalsTo(MakeArray(Seq.tabulate(10)(I32), TArray(TInt32())),
       IndexedSeq.tabulate(10)(identity))
   }
+
+  @Test def testSimpleArray() {
+    val t = TInt32()
+    val x = Ref("x", t)
+    val a = Ref("a", TArray(t))
+    assertEvalsTo(
+      Let("a", NA(TArray(t)),
+        ArrayMap(a, "x", x + 1)),
+      null)
+    assertEvalsTo(
+      Let("a", ArrayRange(0, 5, 1),
+        ArrayMap(a, "x", x + 1)),
+      IndexedSeq.tabulate(5)(_ + 1))
+  }
+
 }
