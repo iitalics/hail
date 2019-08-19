@@ -1116,8 +1116,13 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
 
       case ir.MakeStream(args, t) =>
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
+        val triplets = args.map(emit(arrayRegion, _, env))
+        PullStreamEmitter.fromTriplets(fb, streamType, triplets)
+          .toArrayEmitter(arrayRegion, sameRegion)
+        /*
         ArrayEmitter.fromTriplets(fb, arrayRegion, sameRegion, elemType,
           args.map(emit(arrayRegion, _, env)))
+         */
 
       case ir.ToStream(array) =>
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)

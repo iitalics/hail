@@ -132,4 +132,9 @@ class ArrayDeforestationSuite extends HailSuite {
     assertEvalsTo(ArrayRange(I32(0), I32(10), I32(1)),
       IndexedSeq.tabulate(10)(identity))
   }
+
+  @Test def testSimpleLiteral() {
+    assertEvalsTo(MakeArray(Seq.tabulate(10)(I32), TArray(TInt32())),
+      IndexedSeq.tabulate(10)(identity))
+  }
 }

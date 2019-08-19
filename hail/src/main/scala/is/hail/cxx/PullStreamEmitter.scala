@@ -79,6 +79,48 @@ abstract class PullStreamEmitter(
 }
 
 object PullStreamEmitter {
+
+  class Empty(fb: FunctionBuilder, pType: PStream)
+      extends PullStreamEmitter(fb, pType, "", m = "false") {
+    def init(elem: Continuation, eos: Continuation): Code = eos()
+    def step(elem: Continuation, eos: Continuation): Code = eos()
+  }
+
+  def fromTriplets(
+    fb: FunctionBuilder,
+    pType: PStream,
+    _triplets: Seq[EmitTriplet]
+  ): PullStreamEmitter =
+    if (_triplets.isEmpty)
+      new Empty(fb, pType)
+    else {
+      assert(_triplets.forall(_.pType isOfType pType.elementType))
+      val triplets = _triplets.map(_.memoize(fb))
+      val i = fb.variable("i", "int")
+      val setup = Code.sequence(i.define +: triplets.map(_.setup))
+      new PullStreamEmitter(fb, pType, setup, "false") {
+        def init(elem: Continuation, eos: Continuation): Code =
+          s"""
+             |$i = 0;
+             |${elem(triplets(0).m, triplets(0).v)}
+           """.stripMargin
+
+        def step(elem: Continuation, eos: Continuation): Code = {
+          val cases = Code.sequence(
+            triplets.tail.zipWithIndex.map { case (et, idx) =>
+              s"case $idx: ${elem(et.m, et.v)}"
+            })
+          s"""
+             |switch($i++) {
+             |${cases}
+             |default:
+             |  ${eos()}
+             |}
+           """.stripMargin
+        }
+      }
+    }
+
   def range(fb: FunctionBuilder, _len: EmitTriplet) = {
     assert(_len.pType isOfType PInt32())
     val i = fb.variable("i", "int")
