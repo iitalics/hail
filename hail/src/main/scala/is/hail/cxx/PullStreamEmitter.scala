@@ -17,6 +17,29 @@ abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
 
   def elemType = pType.elementType
 
+  def map(f: (Code, Code) => EmitTriplet): PullStreamEmitter = {
+    val vm = fb.variable("vm", "bool")
+    val vv = fb.variable("vv", typeToCXXType(elemType))
+    val bodyt = f(vm.toString, vv.toString).memoize(fb)
+    val newType = coerce[PStream](pType.copyStreamable(bodyt.pType))
+    new PullStreamEmitter(fb, newType) {
+      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+        val (mapElem, defineMapElemL) = lb.createWithMissingness("map", self.elemType)
+        defineMapElemL { case Seq(m, v) =>
+          s"""
+             |${vm.define}
+             |${vv.define}
+             |$vm = $m;
+             |$vv = $v;
+             |${bodyt.setup}
+             |${elem(bodyt.m, bodyt.v)}
+           """.stripMargin
+        }
+        self.emit(lb, mapElem, eos)
+      }
+    }
+  }
+
   def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter = {
     val lb = new LabelBuilder(fb)
     val (elem, defineElemL) = lb.createWithMissingness("elem", elemType)
@@ -36,6 +59,10 @@ abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
            |${lb.defineLabels}
          """.stripMargin
       }
+
+      override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
+        self.map { (m, v) => f(EmitTriplet(elemType, "", m, v, arrayRegion)) }
+          .toArrayEmitter(arrayRegion, sameRegion)
     }
   }
 }

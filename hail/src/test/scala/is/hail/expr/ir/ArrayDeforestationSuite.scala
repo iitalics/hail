@@ -132,4 +132,11 @@ class ArrayDeforestationSuite extends HailSuite {
     assertEvalsTo(ArrayRange(0, 10, 1),
       IndexedSeq.tabulate(10)(identity))
   }
+
+  @Test def testSimpleMap() {
+    val t = TInt32()
+    val x = Ref("x", t)
+    assertEvalsTo(ArrayMap(ArrayRange(0, 10, 1), "x", Cast(x, TFloat32())),
+      IndexedSeq.tabulate(10)(_.toFloat))
+  }
 }
