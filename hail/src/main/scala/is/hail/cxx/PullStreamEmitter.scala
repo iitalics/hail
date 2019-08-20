@@ -15,24 +15,23 @@ abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
 
   def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream
 
-  def toArrayEmitter(
-    arrayRegion: EmitRegion,
-    sameRegion: Boolean
-  ): ArrayEmitter = {
+  def elemType = pType.elementType
+
+  def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter = {
     val lb = new LabelBuilder(fb)
-    val (elemL, defineElemL) = lb.create("label", "m" -> "bool", "v" -> typeToCXXType(pType.elementType))
-
-    val EmitPullStream(setup, m, init, step) = emit(lb, elemL, lb.exitLabel)
-
+    val (elem, defineElemL) = lb.createWithMissingness("elem", elemType)
+    val EmitPullStream(setup, m, init, step) = emit(lb, elem, lb.exitLabel)
     new ArrayEmitter(pType, Code(lb.defineVars, setup), m, "", None, arrayRegion) {
       def consume(f: (Code, Code) => Code): Code = {
         defineElemL { case Seq(m, v) =>
           s"""
              |${f(m, v)}
+             |${/* TODO: make per-element region here */""}
              |${step}
            """.stripMargin
         }
         s"""
+           |${/* TODO: make per-element region here */""}
            |${init}
            |${lb.defineLabels}
          """.stripMargin

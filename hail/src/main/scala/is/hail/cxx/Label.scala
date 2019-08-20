@@ -68,4 +68,7 @@ class LabelBuilder(fb: FunctionBuilder) {
     allVars ++= vars
     (cont, define)
   }
+
+  def createWithMissingness(p: String, args: PType*): (Label, DefineF) =
+    create(p, args.flatMap { t => Seq(s"m" -> "bool", s"v" -> typeToCXXType(t))}: _*)
 }

@@ -129,7 +129,7 @@ class ArrayDeforestationSuite extends HailSuite {
 
 
   @Test def testSimpleRange() {
-    assertEvalsTo(ArrayRange(I32(0), I32(10), I32(1)),
+    assertEvalsTo(ArrayRange(0, 10, 1),
       IndexedSeq.tabulate(10)(identity))
   }
 }
