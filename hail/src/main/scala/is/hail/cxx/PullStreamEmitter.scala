@@ -40,6 +40,37 @@ abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
     }
   }
 
+  def filter(f: (Code, Code) => EmitTriplet): PullStreamEmitter = {
+    val vm = fb.variable("vm", "bool")
+    val vv = fb.variable("vv", typeToCXXType(elemType))
+    val condt = f(vm.toString, vv.toString)
+    assert(condt.pType isOfType PBoolean())
+    new PullStreamEmitter(fb, pType) {
+      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+        val (filterElem, defineFilterElemL) = lb.createWithMissingness("filter", self.elemType)
+        val (step, defineStepL) = lb.createWithMissingness("step")
+        val stream = self.emit(lb, filterElem, eos)
+        defineFilterElemL { case Seq(m, v) =>
+          s"""
+             |${vm.define}
+             |${vv.define}
+             |$vm = $m;
+             |$vv = $v;
+             |${condt.setup}
+             |if(!${condt.m} && ${condt.v}) {
+             |  ${elem(m, v)}
+             |} else {
+             |  ${step()}
+             |}
+           """.stripMargin
+        }
+        // create join point for step so we don't repeat the step code
+        defineStepL { _ => stream.step }
+        EmitPullStream(stream.setup, stream.m, stream.init, step())
+      }
+    }
+  }
+
   def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter = {
     val lb = new LabelBuilder(fb)
     val (elem, defineElemL) = lb.createWithMissingness("elem", elemType)
@@ -62,6 +93,10 @@ abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
 
       override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
         self.map { (m, v) => f(EmitTriplet(elemType, "", m, v, arrayRegion)) }
+          .toArrayEmitter(arrayRegion, sameRegion)
+
+      override def filter(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
+        self.filter { (m, v) => f(EmitTriplet(PBoolean(), "", m, v, arrayRegion)) }
           .toArrayEmitter(arrayRegion, sameRegion)
     }
   }

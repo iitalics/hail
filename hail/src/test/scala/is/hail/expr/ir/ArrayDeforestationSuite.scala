@@ -139,4 +139,11 @@ class ArrayDeforestationSuite extends HailSuite {
     assertEvalsTo(ArrayMap(ArrayRange(0, 10, 1), "x", Cast(x, TFloat32())),
       IndexedSeq.tabulate(10)(_.toFloat))
   }
+
+  @Test def testSimpleFilter() {
+    val t = TInt32()
+    val x = Ref("x", t)
+    assertEvalsTo(ArrayFilter(ArrayRange(0, 10, 1), "x", x cne 3),
+      IndexedSeq.tabulate(10)(identity).filter(_ != 3))
+  }
 }
