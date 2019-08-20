@@ -126,4 +126,10 @@ class ArrayDeforestationSuite extends HailSuite {
         If(IsNA(r), l, 0)),
       IndexedSeq(0, 1, 0, 3, 4, 0, 6, 7, 0, 9))
   }
+
+
+  @Test def testSimpleRange() {
+    assertEvalsTo(ArrayRange(I32(0), I32(10), I32(1)),
+      IndexedSeq.tabulate(10)(identity))
+  }
 }
