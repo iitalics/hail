@@ -50,12 +50,6 @@ object PullStreamEmitter {
         val n = fb.variable("n", "int")
         val setup = Code(i.define, n.define, len.setup)
         val (step, defineStepL) = lb.create("step")
-        val init =
-          s"""
-             |$n = ${len.v};
-             |$i = -1;
-             |${step()}
-           """.stripMargin
         defineStepL { _ =>
           s"""
              |++$i;
@@ -66,6 +60,12 @@ object PullStreamEmitter {
              |}
            """.stripMargin
         }
+        val init =
+          s"""
+             |$n = ${len.v};
+             |$i = -1;
+             |${step()}
+           """.stripMargin
         EmitPullStream(setup, len.m, init, step())
       }
     }
