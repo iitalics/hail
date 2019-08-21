@@ -24,6 +24,7 @@ abstract class ArrayEmitter(
     }
 
   def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter = {
+    /*
     val vm = fb.variable("m", "bool")
     val vv = fb.variable("v", typeToCXXType(elemType))
     val bodyt = f(EmitTriplet(elemType, "", vm.toString, vv.toString, arrayRegion))
@@ -43,9 +44,12 @@ abstract class ArrayEmitter(
              |""".stripMargin
         }
     }
+     */
+    fatal("whoops!")
   }
 
   def filter(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter = {
+    /*
     val vm = fb.variable("m", "bool")
     val vv = fb.variable("v", typeToCXXType(elemType))
     val condt = f(EmitTriplet(elemType, "", vm.toString, vv.toString, arrayRegion))
@@ -67,9 +71,12 @@ abstract class ArrayEmitter(
              |""".stripMargin
         }
     }
+     */
+    fatal("whoops!")
   }
 
   def flatMap(fb: FunctionBuilder)(f: EmitTriplet => ArrayEmitter): ArrayEmitter = {
+    /*
     val vm = fb.variable("m", "bool")
     val vv = fb.variable("v", typeToCXXType(elemType))
     val bodyae = f(EmitTriplet(elemType, "", vm.toString, vv.toString, arrayRegion))
@@ -91,6 +98,8 @@ abstract class ArrayEmitter(
              |""".stripMargin
         }
     }
+     */
+    fatal("whoops!")
   }
 }
 
