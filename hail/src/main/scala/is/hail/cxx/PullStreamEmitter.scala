@@ -13,7 +13,7 @@ case class EmitPullStream(
 
 abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { self =>
 
-  def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream
+  def emit(elem: Label, eos: Label): EmitPullStream
 
   def elemType = pType.elementType
 
@@ -23,7 +23,8 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
     val bodyt = f(vm.toString, vv.toString).memoize(fb)
     val newType = coerce[PStream](pType.copyStreamable(bodyt.pType))
     new PullStreamEmitter(fb, newType) {
-      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+      def emit(elem: Label, eos: Label): EmitPullStream = {
+        /*
         val (mapElem, defineMapElemL) = lb.createWithMissingness("map", self.elemType)
         defineMapElemL { case Seq(m, v) =>
           s"""
@@ -36,6 +37,8 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
            """.stripMargin
         }
         self.emit(lb, mapElem, eos)
+         */
+        ???
       }
     }
   }
@@ -46,7 +49,8 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
     val condt = f(vm.toString, vv.toString)
     assert(condt.pType isOfType PBoolean())
     new PullStreamEmitter(fb, pType) {
-      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+      def emit(elem: Label, eos: Label): EmitPullStream = {
+        /*
         val (filterElem, defineFilterElemL) = lb.createWithMissingness("filter", self.elemType)
         val (step, defineStepL) = lb.createWithMissingness("step")
         val stream = self.emit(lb, filterElem, eos)
@@ -67,6 +71,8 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
         // create join point for step so we don't repeat the step code
         defineStepL { _ => stream.step }
         EmitPullStream(stream.setup, stream.m, stream.init, step())
+         */
+        ???
       }
     }
   }
@@ -79,12 +85,21 @@ object PullStreamEmitter {
   def range(fb: FunctionBuilder, len: EmitTriplet): PullStreamEmitter = {
     assert(len.pType isOfType PInt32())
     new PullStreamEmitter(fb, PStream(PInt32Required, len.pType.required)) {
-      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+      def emit(elem: Label, eos: Label): EmitPullStream = {
         val i = fb.variable("i", "int")
         val n = fb.variable("n", "int")
         val setup = Code(i.define, n.define, len.setup)
-        val (step, defineStepL) = lb.create("step")
-        defineStepL { _ =>
+        val init =
+          s"""
+             |$n = ${len.v};
+             |if ($n > 0) {
+             |  $i = 0;
+             |  ${elem("false", "0")}
+             |} else {
+             |  ${eos()}
+             |}
+           """.stripMargin
+        val step =
           s"""
              |++$i;
              |if($i < $n) {
@@ -93,21 +108,14 @@ object PullStreamEmitter {
              |  ${eos()}
              |}
            """.stripMargin
-        }
-        val init =
-          s"""
-             |$n = ${len.v};
-             |$i = -1;
-             |${step()}
-           """.stripMargin
-        EmitPullStream(setup, len.m, init, step())
+        EmitPullStream(setup, len.m, init, step)
       }
     }
   }
 
   def empty(fb: FunctionBuilder, pType: PStream) =
     new PullStreamEmitter(fb, pType) {
-      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream =
+      def emit(elem: Label, eos: Label): EmitPullStream =
         EmitPullStream("", "false", eos(), eos())
     }
 
@@ -121,7 +129,7 @@ object PullStreamEmitter {
     else {
       assert(triplets.forall(_.pType isOfType pType.elementType))
       new PullStreamEmitter(fb, pType) {
-        def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+        def emit(elem: Label, eos: Label): EmitPullStream = {
           val ts = triplets.map(_.memoize(fb))
           val i = fb.variable("i", "int")
           val init =
@@ -149,24 +157,28 @@ class PullStreamToAE(
   arrayRegion: EmitRegion,
   sameRegion: Boolean,
   stream: EmitPullStream,
-  lb: LabelBuilder,
-  defineElemL: LabelBuilder.DefineF
-) extends ArrayEmitter(base.pType, Code(lb.defineVars, stream.setup), stream.m, "", None, arrayRegion) {
+  elemm: Variable,
+  elemv: Variable,
+  elemLabel: Label,
+  eosLabel: Label
+) extends ArrayEmitter(
+  base.pType,
+  Code(elemm.define, elemv.define, stream.setup),
+  stream.m,
+  "", None, arrayRegion) {
 
-  def consume(f: (Code, Code) => Code): Code = {
-    defineElemL { case Seq(m, v) =>
-      s"""
-         |${f(m, v)}
-         |${/* TODO: make per-element region here */""}
-         |${stream.step}
-       """.stripMargin
-    }
-    s"""
-       |${/* TODO: make per-element region here */""}
-       |${stream.init}
-       |${lb.defineLabels}
-     """.stripMargin
-  }
+  def consume(f: (Code, Code) => Code): Code =
+    Code(
+      /* TODO: initialize per-element region here */
+      stream.init,
+      elemLabel.define(
+        s"""
+           |${f(elemm.toString, elemv.toString)}
+           |${/* TODO: initialize per-element region here */""}
+           |${stream.step}
+         """.stripMargin
+      ),
+      eosLabel.define(""))
 
   override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
     base.map { (m, v) => f(EmitTriplet(base.elemType, "", m, v, arrayRegion)) }
@@ -179,9 +191,12 @@ class PullStreamToAE(
 
 object PullStreamToAE {
   def apply(base: PullStreamEmitter, arrayRegion: EmitRegion, sameRegion: Boolean): PullStreamToAE = {
-    val lb = new LabelBuilder(base.fb)
-    val (elem, defineElemL) = lb.createWithMissingness("elem", base.elemType)
-    val stream = base.emit(lb, elem, lb.exitLabel)
-    new PullStreamToAE(base, arrayRegion, sameRegion, stream, lb, defineElemL)
+    val elemm = base.fb.variable("elem_m", "bool")
+    val elemv = base.fb.variable("elem_v", typeToCXXType(base.elemType))
+    val elemLabel = Label(base.fb.genSym("elem"), Seq(elemm, elemv))
+    val eosLabel = Label(base.fb.genSym("eos"), Seq())
+    val stream = base.emit(elemLabel, eosLabel)
+    new PullStreamToAE(base, arrayRegion, sameRegion, stream,
+      elemm, elemv, elemLabel, eosLabel)
   }
 }
