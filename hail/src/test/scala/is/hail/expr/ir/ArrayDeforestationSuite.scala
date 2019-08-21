@@ -140,10 +140,17 @@ class ArrayDeforestationSuite extends HailSuite {
   }
 
   @Test def testSimpleMap() {
-    val t = TInt32()
-    val x = Ref("x", t)
+    val x = Ref("x", TInt32())
+    val y = Ref("y", TFloat32())
     assertEvalsTo(ArrayMap(ArrayRange(0, 10, 1), "x", Cast(x, TFloat32())),
       IndexedSeq.tabulate(10)(_.toFloat))
+    assertEvalsTo(
+      ArrayMap(
+        ArrayMap(
+          ArrayRange(0, 10, 1),
+          "x", Cast(x, TFloat32())),
+        "y", y + 3.0f),
+      IndexedSeq.tabulate(10)(_.toFloat + 3.0f))
   }
 
   @Test def testSimpleFilter() {
@@ -151,5 +158,7 @@ class ArrayDeforestationSuite extends HailSuite {
     val x = Ref("x", t)
     assertEvalsTo(ArrayFilter(ArrayRange(0, 10, 1), "x", x cne 3),
       IndexedSeq.tabulate(10)(identity).filter(_ != 3))
+    assertEvalsTo(ArrayMap(ArrayFilter(ArrayRange(0, 10, 1), "x", x cne 3), "x", x * 5),
+      IndexedSeq.tabulate(10)(identity).filter(_ != 3).map(_ * 5))
   }
 }

@@ -21,24 +21,21 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
     val vm = fb.variable("vm", "bool")
     val vv = fb.variable("vv", typeToCXXType(elemType))
     val bodyt = f(vm.toString, vv.toString).memoize(fb)
-    val newType = coerce[PStream](pType.copyStreamable(bodyt.pType))
-    new PullStreamEmitter(fb, newType) {
+    val mapElem = Label(fb.genSym("map"), Seq(vm, vv))
+
+    new PullStreamEmitter(fb, coerce[PStream](pType.copyStreamable(bodyt.pType))) {
       def emit(elem: Label, eos: Label): EmitPullStream = {
-        /*
-        val (mapElem, defineMapElemL) = lb.createWithMissingness("map", self.elemType)
-        defineMapElemL { case Seq(m, v) =>
-          s"""
-             |${vm.define}
-             |${vv.define}
-             |$vm = $m;
-             |$vv = $v;
-             |${bodyt.setup}
-             |${elem(bodyt.m, bodyt.v)}
-           """.stripMargin
-        }
-        self.emit(lb, mapElem, eos)
-         */
-        ???
+        val es = self.emit(mapElem, eos)
+        val setup = Code(vm.define, vv.define, es.setup)
+        val init = Code(
+          es.init,
+          mapElem.define(
+            s"""
+               |${bodyt.setup}
+               |${elem(bodyt.m, bodyt.v)}
+             """.stripMargin)
+        )
+        EmitPullStream(setup, es.m, init, es.step)
       }
     }
   }
@@ -48,31 +45,28 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
     val vv = fb.variable("vv", typeToCXXType(elemType))
     val condt = f(vm.toString, vv.toString)
     assert(condt.pType isOfType PBoolean())
+    val filterElem = Label(fb.genSym("filter"), Seq(vm, vv))
+    val step = Label(fb.genSym("step"), Seq())
+
     new PullStreamEmitter(fb, pType) {
       def emit(elem: Label, eos: Label): EmitPullStream = {
-        /*
-        val (filterElem, defineFilterElemL) = lb.createWithMissingness("filter", self.elemType)
-        val (step, defineStepL) = lb.createWithMissingness("step")
-        val stream = self.emit(lb, filterElem, eos)
-        defineFilterElemL { case Seq(m, v) =>
-          s"""
-             |${vm.define}
-             |${vv.define}
-             |$vm = $m;
-             |$vv = $v;
-             |${condt.setup}
-             |if(!${condt.m} && ${condt.v}) {
-             |  ${elem(m, v)}
-             |} else {
-             |  ${step()}
-             |}
-           """.stripMargin
-        }
-        // create join point for step so we don't repeat the step code
-        defineStepL { _ => stream.step }
-        EmitPullStream(stream.setup, stream.m, stream.init, step())
-         */
-        ???
+        val es = self.emit(filterElem, eos)
+        val setup = Code(vm.define, vv.define, es.setup)
+        val init = Code(
+          es.init,
+          filterElem.define(
+            s"""
+               |${condt.setup}
+               |if(!${condt.m} && ${condt.v}) {
+               |  ${elem(vm.toString, vv.toString)}
+               |} else {
+               |  ${step()}
+               |}
+             """.stripMargin),
+          // create label for step so we don't repeat its code
+          step.define(es.step)
+        )
+        EmitPullStream(setup, es.m, init, step())
       }
     }
   }
