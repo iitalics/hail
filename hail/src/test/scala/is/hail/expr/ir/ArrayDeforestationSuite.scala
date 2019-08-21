@@ -133,6 +133,12 @@ class ArrayDeforestationSuite extends HailSuite {
       IndexedSeq.tabulate(10)(identity))
   }
 
+  @Test def testSimpleMake() {
+    assertEvalsTo(
+      MakeArray(Seq(I32(8), I32(2), NA(TInt32()), I32(5)), TArray(TInt32Optional)),
+      IndexedSeq(8, 2, null, 5))
+  }
+
   @Test def testSimpleMap() {
     val t = TInt32()
     val x = Ref("x", t)

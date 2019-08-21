@@ -131,4 +131,42 @@ object PullStreamEmitter {
       }
     }
   }
+
+  def empty(fb: FunctionBuilder, pType: PStream) =
+    new PullStreamEmitter(fb, pType) {
+      def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream =
+        EmitPullStream("", "false", eos(), eos())
+    }
+
+  def fromTriplets(
+    fb: FunctionBuilder,
+    triplets: Seq[EmitTriplet],
+    pType: PStream
+  ): PullStreamEmitter =
+    if (triplets.isEmpty)
+      empty(fb, pType)
+    else {
+      assert(triplets.forall(_.pType isOfType pType.elementType))
+      new PullStreamEmitter(fb, pType) {
+        def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream = {
+          val ts = triplets.map(_.memoize(fb))
+          val i = fb.variable("i", "int")
+          val init =
+            s"""
+               |$i = 0;
+               |${elem(ts(0).m, ts(0).v)}
+             """.stripMargin
+          val step =
+            s"""
+               |switch (${i}++) {
+               |${Code.sequence(ts.tail.zipWithIndex.map { case (t, idx) =>
+                   s"case $idx: ${elem(t.m, t.v)}" }) }
+               |default:
+               |  ${eos()}
+               |}
+             """.stripMargin
+          EmitPullStream(Code.sequence(i.define +: ts.map(_.setup)), "false", init, step)
+        }
+      }
+    }
 }
