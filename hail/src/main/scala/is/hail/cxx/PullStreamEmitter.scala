@@ -11,7 +11,7 @@ case class EmitPullStream(
   step: Code
 )
 
-abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
+abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { self =>
 
   def emit(lb: LabelBuilder, elem: Label, eos: Label): EmitPullStream
 
@@ -71,35 +71,8 @@ abstract class PullStreamEmitter(fb: FunctionBuilder, pType: PStream) { self =>
     }
   }
 
-  def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter = {
-    val lb = new LabelBuilder(fb)
-    val (elem, defineElemL) = lb.createWithMissingness("elem", elemType)
-    val EmitPullStream(setup, m, init, step) = emit(lb, elem, lb.exitLabel)
-    new ArrayEmitter(pType, Code(lb.defineVars, setup), m, "", None, arrayRegion) {
-      def consume(f: (Code, Code) => Code): Code = {
-        defineElemL { case Seq(m, v) =>
-          s"""
-             |${f(m, v)}
-             |${/* TODO: make per-element region here */""}
-             |${step}
-           """.stripMargin
-        }
-        s"""
-           |${/* TODO: make per-element region here */""}
-           |${init}
-           |${lb.defineLabels}
-         """.stripMargin
-      }
-
-      override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
-        self.map { (m, v) => f(EmitTriplet(elemType, "", m, v, arrayRegion)) }
-          .toArrayEmitter(arrayRegion, sameRegion)
-
-      override def filter(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
-        self.filter { (m, v) => f(EmitTriplet(PBoolean(), "", m, v, arrayRegion)) }
-          .toArrayEmitter(arrayRegion, sameRegion)
-    }
-  }
+  def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter =
+    PullStreamToAE(this, arrayRegion, sameRegion)
 }
 
 object PullStreamEmitter {
@@ -169,4 +142,46 @@ object PullStreamEmitter {
         }
       }
     }
+}
+
+class PullStreamToAE(
+  val base: PullStreamEmitter,
+  arrayRegion: EmitRegion,
+  sameRegion: Boolean,
+  stream: EmitPullStream,
+  lb: LabelBuilder,
+  defineElemL: LabelBuilder.DefineF
+) extends ArrayEmitter(base.pType, Code(lb.defineVars, stream.setup), stream.m, "", None, arrayRegion) {
+
+  def consume(f: (Code, Code) => Code): Code = {
+    defineElemL { case Seq(m, v) =>
+      s"""
+         |${f(m, v)}
+         |${/* TODO: make per-element region here */""}
+         |${stream.step}
+       """.stripMargin
+    }
+    s"""
+       |${/* TODO: make per-element region here */""}
+       |${stream.init}
+       |${lb.defineLabels}
+     """.stripMargin
+  }
+
+  override def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
+    base.map { (m, v) => f(EmitTriplet(base.elemType, "", m, v, arrayRegion)) }
+      .toArrayEmitter(arrayRegion, sameRegion)
+
+  override def filter(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
+    base.filter { (m, v) => f(EmitTriplet(PBoolean(), "", m, v, arrayRegion)) }
+      .toArrayEmitter(arrayRegion, sameRegion)
+}
+
+object PullStreamToAE {
+  def apply(base: PullStreamEmitter, arrayRegion: EmitRegion, sameRegion: Boolean): PullStreamToAE = {
+    val lb = new LabelBuilder(base.fb)
+    val (elem, defineElemL) = lb.createWithMissingness("elem", base.elemType)
+    val stream = base.emit(lb, elem, lb.exitLabel)
+    new PullStreamToAE(base, arrayRegion, sameRegion, stream, lb, defineElemL)
+  }
 }
