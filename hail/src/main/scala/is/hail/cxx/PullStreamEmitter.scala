@@ -71,6 +71,35 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
     }
   }
 
+  def flatMap(f: (Code, Code) => PullStreamEmitter): PullStreamEmitter = {
+    val vm = fb.variable("vm", "bool")
+    val vv = fb.variable("vv", typeToCXXType(elemType))
+    val innerEmitter = f(vm.toString, vv.toString)
+    val initInner = Label(fb.genSym("init_inner"), Seq(vm, vv))
+    val stepOuter = Label(fb.genSym("step_outer"), Seq())
+
+    new PullStreamEmitter(fb, coerce[PStream](pType.copyStreamable(innerEmitter.elemType))) {
+      def emit(elem: Label, eos: Label): EmitPullStream = {
+        val outer = self.emit(initInner, eos)
+        val inner = innerEmitter.emit(elem, stepOuter)
+        val defineVars = Code(outer.defineVars, inner.defineVars, vm.define, vv.define)
+        val defineLabels = Code(outer.defineLabels, inner.defineLabels,
+          initInner.define(
+            s"""
+               |${inner.setup}
+               |if (${inner.m}) {
+               |  ${stepOuter()}
+               |} else {
+               |  ${inner.init}
+               |}
+             """.stripMargin),
+          stepOuter.define(outer.step)
+        )
+        EmitPullStream(defineVars, defineLabels, outer.setup, outer.m, outer.init, inner.step)
+      }
+    }
+  }
+
   def toArrayEmitter(arrayRegion: EmitRegion, sameRegion: Boolean): ArrayEmitter =
     PullStreamToAE(this, arrayRegion, sameRegion)
 }
@@ -189,6 +218,15 @@ class PullStreamToAE(
   override def filter(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter =
     base.filter { (m, v) => f(EmitTriplet(PBoolean(), "", m, v, arrayRegion)) }
       .toArrayEmitter(arrayRegion, sameRegion)
+
+  override def flatMap(fb: FunctionBuilder)(f: EmitTriplet => ArrayEmitter): ArrayEmitter =
+    base.flatMap { (m, v) =>
+      val t = EmitTriplet(base.elemType, "", m, v, arrayRegion)
+      f(t) match {
+        case x: PullStreamToAE => x.base
+        case _ => fatal("cannot flatmap")
+      }
+    }.toArrayEmitter(arrayRegion, sameRegion)
 }
 
 object PullStreamToAE {

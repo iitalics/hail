@@ -161,4 +161,13 @@ class ArrayDeforestationSuite extends HailSuite {
     assertEvalsTo(ArrayMap(ArrayFilter(ArrayRange(0, 10, 1), "x", x cne 3), "x", x * 5),
       IndexedSeq.tabulate(10)(identity).filter(_ != 3).map(_ * 5))
   }
+
+  @Test def testSimpleFlatMap() {
+    val t = TInt32()
+    val x = Ref("x", t)
+    assertEvalsTo(ArrayFlatMap(ArrayRange(0, 4, 1), "x", ArrayRange(0, x, 1)),
+      IndexedSeq(0, 0, 1, 0, 1, 2))
+    assertEvalsTo(ArrayFlatMap(ArrayRange(0, 3, 1), "x", MakeArray(Seq(x, x, x), TArray(t))),
+      IndexedSeq(0, 0, 0, 1, 1, 1, 2, 2, 2))
+  }
 }
