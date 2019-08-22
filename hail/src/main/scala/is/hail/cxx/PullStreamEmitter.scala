@@ -134,49 +134,35 @@ object PullStreamEmitter {
     }
   }
 
-  def empty(fb: FunctionBuilder, pType: PStream) =
-    new PullStreamEmitter(fb, pType) {
-      def emit(elem: Label, eos: Label): EmitPullStream =
-        EmitPullStream("", "", "", "false", eos(), eos())
-    }
-
   def fromTriplets(
     fb: FunctionBuilder,
     triplets: Seq[EmitTriplet],
     pType: PStream
   ): PullStreamEmitter = {
-    val len = triplets.length
-    val ms = fb.genSym("ms")
-    val vs = fb.genSym("vs")
-
-    val implEmitter =
-      range(fb, EmitTriplet(PInt32Required, "", "false", len.toString, null))
-        .map { (_, i) => EmitTriplet(pType.elementType, "", s"$ms[$i]", s"$vs[$i]", null)}
-
     assert(triplets.forall(_.pType isOfType pType.elementType))
     new PullStreamEmitter(fb, pType) {
       def emit(elem: Label, eos: Label): EmitPullStream = {
-        val impl = implEmitter.emit(elem, eos)
-        val defineVars =
+        val i = fb.variable("i", "int")
+        val step = Label(fb.genSym("step"), Seq())
+        EmitPullStream(
+          i.define,
+          step.define(
+            s"""
+               |switch($i++) {
+               |${Code.sequence(triplets.zipWithIndex.map { case (t, idx) =>
+                    s"case $idx: { ${t.setup} ${elem(t.m, t.v)} }"
+                  })}
+               |default:
+               |  ${eos()}
+               |}
+             """.stripMargin),
+          "",
+          "false",
           s"""
-             |${impl.defineVars}
-             |bool $ms[$len];
-             |${typeToCXXType(pType.elementType)} $vs[$len];
-           """.stripMargin
-        val setup =
-          s"""
-             |${impl.setup}
-             |${Code.sequence(triplets.zipWithIndex.map { case (t, i) =>
-                 s"""
-                    |${t.setup}
-                    |$ms[$i] = ${t.m};
-                    |if(!$ms[$i]) {
-                    |  $vs[$i] = ${t.v};
-                    |}
-                  """.stripMargin
-              }) }
-           """.stripMargin
-        EmitPullStream(defineVars, impl.defineLabels, setup, impl.m, impl.init, impl.step)
+             |$i = 0;
+             |${step()}
+             """.stripMargin,
+          step())
       }
     }
   }
