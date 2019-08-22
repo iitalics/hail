@@ -105,31 +105,60 @@ abstract class PullStreamEmitter(val fb: FunctionBuilder, val pType: PStream) { 
 }
 
 object PullStreamEmitter {
-  def range(fb: FunctionBuilder, len: EmitTriplet): PullStreamEmitter = {
-    val incr = Label(fb.genSym("incr"), Seq())
-    assert(len.pType isOfType PInt32())
-    new PullStreamEmitter(fb, PStream(PInt32Required, len.pType.required)) {
+  def range(
+    fb: FunctionBuilder,
+    startt: EmitTriplet,
+    stopt: EmitTriplet,
+    stept: EmitTriplet,
+    formatError: String => String = x => x
+  ): PullStreamEmitter = {
+    assert(Seq(startt, stopt, stept).forall(_.pType isOfType PInt32()))
+    new PullStreamEmitter(fb, PStream(PInt32())) {
       def emit(elem: Label, eos: Label): EmitPullStream = {
+        val v = fb.variable("v", "int")
+        val stopv = fb.variable("stopv", "int")
+        val stepv = fb.variable("stepv", "int")
         val i = fb.variable("i", "int")
-        val n = fb.variable("n", "int")
-        val defineVars = Code(i.define, n.define)
-        val defineLabels =
-          incr.define(
-            s"""
-             |++$i;
-             |if($i < $n) {
-             |  ${elem("false", i.toString)}
-             |} else {
-             |  ${eos()}
-             |}
-             """.stripMargin)
-        val init =
+        val len = fb.variable("len", "int")
+        val llen = fb.variable("llen", "long")
+        EmitPullStream(
+          Code(stepv.define, len.define, i.define, v.define),
+          "",
+          s"${startt.setup} ${stopt.setup} ${stept.setup}",
+          s"(${startt.m} || ${stopt.m} || ${stept.m})",
           s"""
-             |$n = ${len.v};
-             |$i = -1;
-             |${incr()}
-           """.stripMargin
-        EmitPullStream(defineVars, defineLabels, len.setup, len.m, init, incr())
+             |${stopv.define}
+             |${llen.define}
+             |${v} = ${startt.v};
+             |${stopv} = ${stopt.v};
+             |${stepv} = ${stept.v};
+             |if ($stepv == 0) {
+             |  ${ fb.nativeError(formatError("Array range step size cannot be 0.")) }
+             |} else if ($stepv < 0)
+             |  $llen = ($v <= $stopv) ? 0l : ((long)$v - (long)$stopv - 1l) / (long)(-$stepv) + 1l;
+             |else
+             |  $llen = ($v >= $stopv) ? 0l : ((long)$stopv - (long)$v - 1l) / (long)$stepv + 1l;
+             |if ($llen > INT_MAX) {
+             |  ${ fb.nativeError(formatError("Array range cannot have more than INT_MAX elements")) }
+             |} else {
+             |  $len = ($llen < 0) ? 0 : (int)$llen;
+             |}
+             |if($len == 0) {
+             |  ${eos()}
+             |} else {
+             |  $i = 0;
+             |  ${elem("false", v.toString)}
+             |}
+           """.stripMargin,
+          s"""
+           |$i++;
+           |$v += $stepv;
+           |if($i < $len) {
+           |  ${elem("false", v.toString)}
+           |} else {
+           |  ${eos()}
+           |}
+           """.stripMargin)
       }
     }
   }
