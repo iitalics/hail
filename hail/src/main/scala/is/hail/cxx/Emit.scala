@@ -1124,9 +1124,13 @@ class Emitter(fb: FunctionBuilder, nSpecialArgs: Int, ctx: SparkFunctionContext)
 
       case ir.ToStream(array) =>
         val arrayRegion = EmitRegion.from(resultRegion, sameRegion)
+        PullStreamEmitter.fromContainer(fb, emit(resultRegion, array, env))
+          .toArrayEmitter(arrayRegion, sameRegion: Boolean)
+        /*
         //val arrayType = coerce[PStreamable](array.pType).asPArray
         ArrayEmitter.fromContainer(fb, arrayRegion, sameRegion,
           emit(resultRegion, array, env))
+         */
 
       case ir.ArrayFilter(a, name, cond) =>
         val ae = emitStream(resultRegion, a, env, sameRegion)

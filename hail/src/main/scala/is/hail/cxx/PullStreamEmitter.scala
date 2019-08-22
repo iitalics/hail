@@ -195,6 +195,40 @@ object PullStreamEmitter {
       }
     }
   }
+
+  def fromContainer(fb: FunctionBuilder, a: EmitTriplet): PullStreamEmitter = {
+    assert(a.pType.isInstanceOf[PContainer])
+    val aType = coerce[PContainer](a.pType)
+    new PullStreamEmitter(fb, PStream(aType.elementType)) {
+      def emit(elem: Label, eos: Label): EmitPullStream = {
+        val array = fb.variable("array", typeToCXXType(aType))
+        val len = aType.cxxLoadLength(array.toString)
+        val elementEmitter = range(fb,
+          EmitTriplet(PInt32(), "", "false", "0", null),
+          EmitTriplet(PInt32(), "", "false", len, null),
+          EmitTriplet(PInt32(), "", "false", "1", null)
+        )
+          .map { (_, i) =>
+            EmitTriplet(elemType, "",
+              aType.cxxIsElementMissing(array.toString, i),
+              loadIRIntermediate(elemType, aType.cxxElementAddress(array.toString, i)),
+              null)
+          }
+        val es = elementEmitter.emit(elem, eos)
+        EmitPullStream(
+          s"${es.defineVars} ${array.define}",
+          es.defineLabels,
+          a.setup,
+          a.m,
+          s"""
+             |$array = ${a.v};
+             |${es.init}
+           """.stripMargin,
+          es.step)
+      }
+    }
+  }
+
 }
 
 class PullStreamToAE(
