@@ -18,6 +18,10 @@ abstract class ArrayEmitter(
 
   def elemType = pType.elementType
 
+  def withSetup(pre: Code): ArrayEmitter = new ArrayEmitter(pType, Code(pre, setup), m, setupLen, length, arrayRegion) {
+    def consume(f: (Code, Code) => Code): Code = self.consume(f)
+  }
+
   def map(fb: FunctionBuilder)(f: EmitTriplet => EmitTriplet): ArrayEmitter = {
     val vm = fb.variable("m", "bool")
     val vv = fb.variable("v", typeToCXXType(elemType))
