@@ -4,6 +4,30 @@ import is.hail.expr.types.physical._
 import is.hail.cxx.{ArgumentPack => AP}
 
 object StagedParameterizedStream {
+  def id[A](_fb: FunctionBuilder, pack: ArgumentPack[A]): StagedParameterizedStream[A, A] =
+    new StagedParameterizedStream[A, A](_fb) {
+      type S = Code
+      val paramPack = pack
+      val eltPack = pack
+      val statePack = AP.boolean
+
+      def init(a: A, start: S => Code, stop: Code) = start("true")
+      def step(a: A, isFirst: S, cons: (A, S) => Code, stop: Code) =
+        s"""
+           |if ($isFirst) {
+           |  ${cons(a, "false")}
+           |} else {
+              $stop
+           |}
+         """.stripMargin
+
+      override def consumeRaw[T](a: A, pack: ArgumentPack[T],
+        zero: T,
+        oper: (T, A, S, (T => Code)) => Code,
+        eos: T => Code
+      ) = oper(zero, a, "false", eos)
+    }
+
   def range(_fb: FunctionBuilder) = new StagedParameterizedStream[Code, Code](_fb) {
     type S = Code
     val paramPack = AP.int32
