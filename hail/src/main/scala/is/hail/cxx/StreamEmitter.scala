@@ -77,8 +77,6 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
     dimap[Q, A](newParamPack, eltPack, f, identity)
 
   def zip[B](other: StagedParameterizedStream[P, B]): StagedParameterizedStream[P, (A, B)] = {
-    type E1 = A
-    type E2 = B
     type S1 = self.S
     type S2 = other.S
     assert(self.fb eq other.fb)
