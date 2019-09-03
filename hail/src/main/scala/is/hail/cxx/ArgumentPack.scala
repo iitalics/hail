@@ -1,38 +1,22 @@
 package is.hail.cxx
 
 import is.hail.expr.types.physical._
-import scala.language.implicitConversions
 
-
-object VariablePack {
-  def typed(fb: FunctionBuilder, pType: PType, prefix: String): VariablePack[Code] =
-    TypedVariablePack(fb.variable(prefix, typeToCXXType(pType)))
-}
-
-abstract class VariablePack[A] { self =>
+trait VariablePack[A] { self =>
   def define: Code
   def load: A
   def store(a: A): Code
-
-  def map[B](from: B => A, to: A => B): VariablePack[B] = new VariablePack[B] {
-    def define: Code = self.define
-    def load: B = to(self.load)
-    def store(b: B): Code = self.store(from(b))
-  }
 }
-
-case class TypedVariablePack(vr: Variable) extends VariablePack[Code] {
-  def define = vr.define
-  def load = vr.name
-  def store(rhs: Code): Code = s"${vr.name} = $rhs;"
-}
-
 
 object ArgumentPack {
 
   def typed(pType: PType) = new ArgumentPack[Code] {
-    def variables(fb: FunctionBuilder, prefix: String) =
-      VariablePack.typed(fb, pType, prefix)
+    def variables(fb: FunctionBuilder, prefix: String) = new VariablePack[Code] {
+      val vr = fb.variable(prefix, typeToCXXType(pType))
+      def define = vr.define
+      def load = vr.name
+      def store(rhs: Code): Code = s"${vr.name} = $rhs;"
+    }
   }
 
   val int32 = typed(PInt32())
@@ -41,8 +25,8 @@ object ArgumentPack {
 
   val unit = new ArgumentPack[Unit] {
     def variables(fb: FunctionBuilder, prefix: String) = new VariablePack[Unit] {
-      val define = ""
-      val load = ()
+      def define = ""
+      def load = ()
       def store(u: Unit): Code = ""
     }
   }
@@ -76,11 +60,11 @@ object ArgumentPack {
   }
 }
 
-abstract class ArgumentPack[A] { self =>
+trait ArgumentPack[A] { self =>
   def variables(fb: FunctionBuilder, prefix: String): VariablePack[A]
 
-  def memoize(fb: FunctionBuilder, a: A): (Code, A) = {
-    val vars = variables(fb, "tmp")
+  def memoize(fb: FunctionBuilder, a: A, prefix: String = "tmp"): (Code, A) = {
+    val vars = variables(fb, prefix)
     (Code(vars.define, vars.store(a)), vars.load)
   }
 }

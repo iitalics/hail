@@ -40,6 +40,7 @@ class LabelBuilder(fb: FunctionBuilder) {
 
   private var _labels: List[EmitLabel[_]] = Nil
   private val _definitions = Map.empty[String, String]
+  private lazy val _hopOver = fb.genSym("hop_over")
 
   def label[A](namePrefix: String, pack: ArgumentPack[A]): EmitLabel[A] = {
     val l = EmitLabel[A](fb, pack, namePrefix, "in")
@@ -56,8 +57,6 @@ class LabelBuilder(fb: FunctionBuilder) {
     _definitions += l.name -> body
   }
 
-  lazy val hopOver = fb.genSym("hop_over")
-
   def end(): Code = {
     for (l <- _labels) {
       if (_definitions.get(l.name).isEmpty)
@@ -65,11 +64,11 @@ class LabelBuilder(fb: FunctionBuilder) {
     }
     s"""
        |${Code.sequence(_labels.map { l => l.args.define })}
-       |goto $hopOver;
+       |goto ${_hopOver};
        |${Code.sequence(_labels.map { l =>
             s"$l: { ${_definitions(l.name)} }"
          })}
-      |$hopOver:;
+      |${_hopOver}:
      """.stripMargin
   }
 
