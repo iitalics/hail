@@ -3,6 +3,50 @@ package is.hail.cxx
 import is.hail.expr.types.physical._
 import is.hail.cxx.{ArgumentPack => AP}
 
+object StagedParameterizedStream {
+  def range(_fb: FunctionBuilder) = new StagedParameterizedStream[Code, Code](_fb) {
+    type S = Code
+    val paramPack = AP.int32
+    val eltPack = AP.int32
+    val statePack = AP.int32
+
+    def init(len: Code, start: Code => Code, stop: Code): Code =
+      s"""
+         |if ($len > 0) {
+         |  ${start("0")}
+         |} else {
+         |  $stop
+         |}
+       """.stripMargin
+
+    def step(len: Code, i: Code, cons: (Code, Code) => Code, stop: Code): Code =
+      s"""
+         |if ($i < $len) {
+         |  ${cons(i, s"($i + 1)")}
+         |} else {
+         |  $stop
+         |}
+       """.stripMargin
+
+    override def consumeRaw[T](
+      len: Code,
+      pack: ArgumentPack[T],
+      zero: T,
+      oper: (T, Code, S, (T => Code)) => Code,
+      eos: T => Code
+    ): Code = {
+      val lb = new LabelBuilder(fb)
+      val loop = lb.label("range_loop", AP.tuple2(pack, AP.int32))
+      lb.define(loop) { case (acc, i) =>
+        step(len, i,
+          (elt, s) => oper(acc, elt, s, acc => loop((acc, s))),
+          eos(acc))
+      }
+      Code(lb.end(), loop((zero, "0")))
+    }
+  }
+}
+
 abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =>
   type S
   def paramPack: ArgumentPack[P]
@@ -183,51 +227,10 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
     StagedStream(self.mapParam(AP.unit, (_ => param)))
 }
 
-class StagedRangeStream(_fb: FunctionBuilder) extends StagedParameterizedStream[Code, Code](_fb) {
-  type S = Code
-  val paramPack = AP.int32
-  val eltPack = AP.int32
-  val statePack = AP.int32
-
-  def init(len: Code, start: Code => Code, stop: Code): Code =
-    s"""
-       |if ($len > 0) {
-       |  ${start("0")}
-       |} else {
-       |  $stop
-       |}
-     """.stripMargin
-
-  def step(len: Code, i: Code, cons: (Code, Code) => Code, stop: Code): Code =
-    s"""
-       |if ($i < $len) {
-       |  ${cons(i, s"($i + 1)")}
-       |} else {
-       |  $stop
-       |}
-     """.stripMargin
-
-  override def consumeRaw[T](
-    len: Code,
-    pack: ArgumentPack[T],
-    zero: T,
-    oper: (T, Code, S, (T => Code)) => Code,
-    eos: T => Code
-  ): Code = {
-    val lb = new LabelBuilder(fb)
-    val loop = lb.label("range_loop", AP.tuple2(pack, AP.int32))
-    lb.define(loop) { case (acc, i) =>
-      step(len, i,
-        (elt, s) => oper(acc, elt, s, acc => loop((acc, s))),
-        eos(acc))
-    }
-    Code(lb.end(), loop((zero, "0")))
-  }
-}
-
 
 object StagedStream {
-  def range(fb: FunctionBuilder) = new StagedRangeStream(fb)
+  def range(fb: FunctionBuilder) =
+    StagedParameterizedStream.range(fb)
 }
 
 case class StagedStream[A](
