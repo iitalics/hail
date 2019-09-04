@@ -11,7 +11,9 @@ object StagedParameterizedStream {
       val eltPack = pack
       val statePack = AP.boolean
 
-      def init(a: A, start: S => Code, stop: Code) = start("true")
+      def init(a: A, start: S => Code, stop: Code, missing: Code) =
+        start("true")
+
       def step(a: A, isFirst: S, cons: (A, S) => Code, stop: Code) =
         s"""
            |if ($isFirst) {
@@ -24,7 +26,7 @@ object StagedParameterizedStream {
       override def consumeRaw[T](a: A, pack: ArgumentPack[T],
         zero: T,
         oper: (T, A, S, (T => Code)) => Code,
-        eos: T => Code
+        eos: T => Code, missing: Code
       ) = oper(zero, a, "false", eos)
     }
 
@@ -34,7 +36,7 @@ object StagedParameterizedStream {
     val eltPack = AP.int32
     val statePack = AP.int32
 
-    def init(len: Code, start: Code => Code, stop: Code): Code =
+    def init(len: Code, start: Code => Code, stop: Code, missing: Code): Code =
       s"""
          |if ($len > 0) {
          |  ${start("0")}
@@ -57,7 +59,7 @@ object StagedParameterizedStream {
       pack: ArgumentPack[T],
       zero: T,
       oper: (T, Code, S, (T => Code)) => Code,
-      eos: T => Code
+      eos: T => Code, missing: Code
     ): Code = {
       val lb = new LabelBuilder(fb)
       val loop = lb.label("range_loop", AP.tuple2(pack, AP.int32))
@@ -80,7 +82,8 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
   def init(
     param: P,
     start: S => Code,
-    stop: Code
+    stop: Code,
+    missing: Code
   ): Code
 
   def step(
@@ -95,7 +98,8 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
     pack: ArgumentPack[T],
     zero: T,
     oper: (T, A, S, (T => Code)) => Code,
-    eos: T => Code
+    eos: T => Code,
+    missing: Code
   ): Code = {
     val lb = new LabelBuilder(fb)
     val loop = lb.label("loop", AP.tuple2(pack, statePack))
@@ -112,37 +116,82 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
            |}
          """.stripMargin
       },
-      eos(zero))
+      eos(zero),
+      missing)
   }
 
-  def dimap[Q, B](newParamPack: ArgumentPack[Q], newEltPack: ArgumentPack[B], f: Q => P, g: A => B) =
-    new StagedParameterizedStream[Q, B](fb) {
+  def map[B](newEltPack: ArgumentPack[B], f: A => B) =
+    new StagedParameterizedStream[P, B](fb) {
       type S = self.S
-      val paramPack = newParamPack
+      def paramPack = self.paramPack
       val eltPack = newEltPack
       def statePack = self.statePack
 
-      def init(param: Q, start: S => Code, stop: Code): Code =
-        self.init(f(param), start, stop)
+      def init(param: P, start: S => Code, stop: Code, missing: Code): Code =
+        self.init(param, start, stop, missing)
 
-      def step(param: Q, state: S, cons: (B, S) => Code, stop: Code): Code =
-        self.step(f(param), state, (a, s) => cons(g(a), s), stop)
+      def step(param: P, state: S, cons: (B, S) => Code, stop: Code): Code =
+        self.step(param, state, (a, s) => cons(f(a), s), stop)
 
-      override def consumeRaw[T](param: Q, pack: ArgumentPack[T],
+      override def consumeRaw[T](param: P, pack: ArgumentPack[T],
         zero: T,
         oper: (T, B, S, (T => Code)) => Code,
-        eos: T => Code
+        eos: T => Code, missing: Code
       ): Code =
-        self.consumeRaw[T](f(param), pack, zero,
-          (t, a, s, k) => oper(t, g(a), s, k),
-          eos)
+        self.consumeRaw[T](param, pack, zero,
+          (t, a, s, k) => oper(t, f(a), s, k),
+          eos, missing)
     }
 
-  def map[B](newEltPack: ArgumentPack[B], f: A => B): StagedParameterizedStream[P, B] =
-    dimap[P, B](paramPack, newEltPack, identity, f)
+  def guard[Q](
+    newParamPack: ArgumentPack[Q],
+    f: Q => (Code, Code, P)
+  ): StagedParameterizedStream[Q, A] =
+    new StagedParameterizedStream[Q, A](fb) {
+      type S = (self.S, P)
+      val paramPack = newParamPack
+      def eltPack = self.eltPack
+      def statePack = AP.tuple2(self.statePack, self.paramPack)
 
-  def mapParam[Q](newParamPack: ArgumentPack[Q], f: Q => P): StagedParameterizedStream[Q, A] =
-    dimap[Q, A](newParamPack, eltPack, f, identity)
+      def init(q: Q, start: S => Code, stop: Code, missing: Code): Code = {
+        val (setup, m, _param) = f(q)
+        val (psetup, param) = self.paramPack.memoize(fb, _param, "p")
+        s"""
+           |$setup
+           |if ($m) {
+           |  $missing
+           |} else {
+           |  $psetup
+           |  ${self.init(param, s => start((s, param)), stop, missing)}
+           |}
+         """.stripMargin
+      }
+
+      def step(q: Q, state: S, cons: (A, S) => Code, stop: Code): Code = {
+        val (s, param) = state
+        self.step(param, s, (a, s) => cons(a, (s, param)), stop)
+      }
+
+      override def consumeRaw[T](q: Q, pack: ArgumentPack[T],
+        zero: T,
+        oper: (T, A, S, (T => Code)) => Code,
+        eos: T => Code, missing: Code
+      ): Code = {
+        val (setup, m, _param) = f(q)
+        val (psetup, param) = self.paramPack.memoize(fb, _param, "p")
+        s"""
+           |$setup
+           |if ($m) {
+           |  $missing
+           |} else {
+           |  $psetup
+           |  ${self.consumeRaw[T](param, pack, zero,
+                 (t, a, s, k) => oper(t, a, (s, param), k),
+                 eos, missing)}
+           |}
+         """.stripMargin
+      }
+    }
 
   def zip[B](other: StagedParameterizedStream[P, B]): StagedParameterizedStream[P, (A, B)] = {
     type S1 = self.S
@@ -154,12 +203,12 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
       def eltPack = AP.tuple2(self.eltPack, other.eltPack)
       def statePack = AP.tuple2(self.statePack, other.statePack)
 
-      def init(param: P, start: ((S1,S2)) => Code, stop: Code): Code =
+      def init(param: P, start: ((S1,S2)) => Code, stop: Code, missing: Code): Code =
         self.init(param, s1 => {
           other.init(param, s2 => {
             start((s1, s2))
-          }, stop)
-        }, stop)
+          }, stop, missing)
+        }, stop, missing)
 
       def step(param: P, state: (S1,S2), cons: ((A,B), (S1,S2)) => Code, stop: Code): Code =
         self.step(param, state._1, (a, s1) => {
@@ -171,7 +220,7 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
       override def consumeRaw[T](param: P, pack: ArgumentPack[T],
         zero: T,
         oper: (T, (A,B), (S1,S2), (T => Code)) => Code,
-        eos: T => Code
+        eos: T => Code, missing: Code
       ): Code =
         other.init(param, s2 => {
           // self "drives" the consume loop; TODO: choose optimal loop driver
@@ -184,9 +233,10 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
                 (b, s2) => oper(acc, (a, b), (s1, s2), acc => continue((acc, s2))),
                 eos(acc))
             },
-            { case (acc, _) => eos(acc) })
+            { case (acc, _) => eos(acc) },
+            missing)
         },
-          eos(zero))
+          eos(zero), missing)
     }
   }
 
@@ -198,14 +248,16 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
       def eltPack = inner.eltPack
       def statePack = AP.tuple3(self.statePack, self.eltPack, inner.statePack)
 
-      def init(param: P, start: S => Code, stop: Code): Code =
+      def init(param: P, start: S => Code, stop: Code, missing: Code): Code =
         self.consumeRaw[Unit](param, AP.unit, (),
           (_, outerElt, outerS, continue) => {
             inner.init(outerElt,
               innerS => start((outerS, outerElt, innerS)),
+              continue(()),
               continue(()))
           },
-          (_ => stop))
+          (_ => stop),
+          missing)
 
       def step(param: P, state: S, cons: (B, S) => Code, stop: Code) = {
         val lb = new LabelBuilder(fb)
@@ -216,6 +268,7 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
             (outerElt, outerS) => {
               inner.init(outerElt, // 2nd call to 'inner.init()' (between init/step)
                 innerS => innerLoop((outerS, outerElt, innerS)),
+                outerLoop(outerS),
                 outerLoop(outerS))
             },
             stop)
@@ -233,7 +286,7 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
       override def consumeRaw[T](param: P, pack: ArgumentPack[T],
         zero: T,
         oper: (T, B, S, T => Code) => Code,
-        eos: T => Code
+        eos: T => Code, missing: Code
       ): Code =
         self.consumeRaw[T](param, pack, zero,
           (acc, outerElt, outerS, continue) => {
@@ -241,14 +294,16 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
               (acc, innerElt, innerS, k) => {
                 oper(acc, innerElt, (outerS, outerElt, innerS), k)
               },
-              continue)
+              continue,
+              continue(acc))
           },
-          eos)
+          eos,
+          missing)
     }
   }
 
   def apply(param: P) =
-    StagedStream(self.mapParam(AP.unit, (_ => param)))
+    StagedStream(self.guard(AP.unit, _ => ("", "false", param)))
 }
 
 
@@ -267,9 +322,30 @@ case class StagedStream[A](
     pack: ArgumentPack[T],
     zero: T,
     oper: (T, A, (T => Code)) => Code,
-    eos: T => Code
+    eos: T => Code,
+    missing: Code
   ) =
-    stream.consumeRaw[T]((), pack, zero, (a, e, s, k) => oper(a, e, k), eos)
+    stream.consumeRaw[T]((), pack, zero, (a, e, s, k) => oper(a, e, k), eos, missing)
+
+  def fold[T](pack: ArgumentPack[T], zero: T)(oper: (T, A) => T): (Code, Code, T) = {
+    val m = fb.variable("m", "bool", "false")
+    val acc = pack.variables(fb, "acc")
+    val loop =
+      EmitLabel.withReturnCont(fb) { ret =>
+        consume[Unit](AP.unit, (),
+          (_, elt, k) => Code(acc.store(oper(acc.load, elt)), k(())),
+          _ => ret,
+          s"$m = true; $ret")
+      }
+    val setup =
+      s"""
+         |${m.define}
+         |${acc.define}
+         |${acc.store(zero)}
+         |$loop
+       """.stripMargin
+    (setup, m.toString, acc.load)
+  }
 
   def map[B](newEltPack: ArgumentPack[B])(f: A => B) =
     StagedStream[B](stream.map(newEltPack, f))

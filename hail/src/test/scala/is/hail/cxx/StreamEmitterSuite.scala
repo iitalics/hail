@@ -20,14 +20,19 @@ class StreamEmitterSuite extends TestNGSuite {
   def range(fb: FunctionBuilder, len: Code) =
     StagedParameterizedStream.range(fb)(len)
 
-  def stagedSum(stream: StagedStream[Code]): Code =
-    EmitLabel.withReturnCont(stream.fb, P.int64) { kRet =>
-      stream.consume[Code](
-        P.int64,
-        "(long) 0",
-        (sum, elt, k) => k(s"($sum + (long) $elt /*--FOLD EXPR--*/)"),
-        kRet(_))
-    }
+  def stagedSum(stream: StagedStream[Code]): Code = {
+    val fb = stream.fb
+    val (setup, m, v) = stream.fold(P.int64, "0") { (a, x) => s"($a + (long) $x /*--FOLD EXPR--*/)" }
+    s"""
+       |({
+       |  $setup
+       |  if ($m) {
+       |    ${fb.nativeError("sum of missing stream")}
+       |  }
+       |  $v;
+       |})
+     """.stripMargin
+  }
 
   @Test def testSumRange() {
     val sum = compileL1 { (fb, arg) =>
@@ -56,7 +61,7 @@ class StreamEmitterSuite extends TestNGSuite {
       stagedSum(
         range(fb, len1)
           .zip(range(fb, len2))
-          .map(P.int32) { case (n, m) => s"($n + $m)" }
+          .map(P.int32) { case (n, m) => s"($n + $m /*--MAP EXPR--*/)" }
       )
     }
     assert(sum(2) == 2*(0+1+2+3), "sum(range(4) + range(5))")
