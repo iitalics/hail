@@ -12,10 +12,13 @@ class StreamEmitterSuite extends TestNGSuite {
   import CompileUtils._
 
   def prange(fb: FunctionBuilder) =
-    StagedParameterizedStream.range(fb)
+    StagedParameterizedStream.range(fb).guard[Code](P.int32, len => ("", "false", (len, "0", "1")))
 
   def range(fb: FunctionBuilder, len: Code) =
-    StagedParameterizedStream.range(fb)(len)
+    prange(fb)(len)
+
+  def range(fb: FunctionBuilder, len: Code, start: Code, step: Code) =
+    StagedParameterizedStream.range(fb)((len, start, step))
 
   def stagedSum(stream: StagedStream[Code]): Code = {
     val fb = stream.fb
@@ -39,6 +42,14 @@ class StreamEmitterSuite extends TestNGSuite {
       val ans = i*(i-1)/2
       assert(sum(i) == ans, s"sum($i)")
     }
+  }
+
+  @Test def testSumStepRange() {
+    val sum = compileL1 { (fb, arg) =>
+      stagedSum(range(fb, "4", "1", arg))
+    }
+    assert(sum(0) == 1 + 1 + 1 + 1, s"sum(0)")
+    assert(sum(3) == 1 + 4 + 7 + 10, s"sum(3)")
   }
 
   @Test def testSumMapRange() {

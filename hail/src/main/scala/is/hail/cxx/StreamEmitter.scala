@@ -4,45 +4,51 @@ import is.hail.expr.types.physical._
 import is.hail.cxx.{ArgumentPack => AP}
 
 object StagedParameterizedStream {
-  def range(_fb: FunctionBuilder) = new StagedParameterizedStream[Code, Code](_fb) {
-    type S = Code
-    val paramPack = AP.int32
+  def range(_fb: FunctionBuilder) = new StagedParameterizedStream[(Code, Code, Code), Code](_fb) {
+    type S = (Code, Code)
+    val paramPack = AP.tuple3(AP.int32, AP.int32, AP.int32) // (len, start, step)
     val eltPack = AP.int32
-    val statePack = AP.int32
+    val statePack = AP.tuple2(AP.int32, AP.int32)
 
-    def init(len: Code, start: Code => Code, stop: Code, missing: Code): Code =
+    def init(param: (Code, Code, Code), start: S => Code, stop: Code, missing: Code): Code = {
+      val (len, v0, _) = param
       s"""
          |if ($len > 0) {
-         |  ${start("0")}
+         |  ${start((len, v0))}
          |} else {
          |  $stop
          |}
        """.stripMargin
+    }
 
-    def step(len: Code, i: Code, cons: (Code, Code) => Code, stop: Code): Code =
+    def step(param: (Code, Code, Code), s: S, cons: (Code, S) => Code, stop: Code): Code = {
+      val (_, _, stepv) = param
+      val (i, v) = s
       s"""
-         |if ($i < $len) {
-         |  ${cons(i, s"($i + 1)")}
+         |if ($i > 0) {
+         |  ${cons(v, (s"($i - 1)", s"($v + $stepv)"))}
          |} else {
          |  $stop
          |}
        """.stripMargin
+    }
 
     override def consumeRaw[T](
-      len: Code,
+      param: (Code, Code, Code),
       pack: ArgumentPack[T],
       zero: T,
       oper: (T, Code, S, (T => Code)) => Code,
       eos: T => Code, missing: Code
     ): Code = {
+      val (len, v0, stepv) = param
       val lb = new LabelBuilder(fb)
-      val loop = lb.label("range_loop", AP.tuple2(pack, AP.int32))
-      lb.define(loop) { case (acc, i) =>
-        step(len, i,
+      val loop = lb.label("range_loop", AP.tuple2(pack, statePack))
+      lb.define(loop) { case (acc, s) =>
+        step(param, s,
           (elt, s) => oper(acc, elt, s, acc => loop((acc, s))),
           eos(acc))
       }
-      Code(lb.end(), loop((zero, "0")))
+      Code(lb.end(), loop((zero, (len, v0))))
     }
   }
 }
@@ -280,11 +286,6 @@ abstract class StagedParameterizedStream[P, A](val fb: FunctionBuilder) { self =
     StagedStream(self.guard(AP.unit, _ => ("", "false", param)))
 }
 
-
-object StagedStream {
-  def range(fb: FunctionBuilder) =
-    StagedParameterizedStream.range(fb)
-}
 
 case class StagedStream[A](
   stream: StagedParameterizedStream[Unit, A]
