@@ -11,9 +11,6 @@ import org.testng.annotations.Test
 class StreamEmitterSuite extends TestNGSuite {
   import CompileUtils._
 
-  def id[A](fb: FunctionBuilder, pack: ArgumentPack[A]) =
-    StagedParameterizedStream.id(fb, pack)
-
   def prange(fb: FunctionBuilder) =
     StagedParameterizedStream.range(fb)
 
