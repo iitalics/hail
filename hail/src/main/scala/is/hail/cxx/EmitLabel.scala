@@ -5,22 +5,6 @@ import is.hail.utils._
 import scala.collection.mutable.{Map, ArrayBuilder}
 
 object EmitLabel {
-
-  def withReturnCont(fb: FunctionBuilder, pack: ArgumentPack[Code])(
-    f: EmitLabel[Code] => Code
-  ): Code = {
-    val kont = EmitLabel(fb, pack, "k", "ret")
-    val body = f(kont)
-    s"""
-       |({
-       |  ${kont.args.define}
-       |  { $body }
-       |  $kont:
-       |  ${kont.args.load};
-       |})
-     """.stripMargin
-  }
-
   def apply[A](fb: FunctionBuilder, pack: ArgumentPack[A], name: String, varName: String): EmitLabel[A] =
     EmitLabel(fb.genSym(name), pack, pack.variables(fb, varName))
 }
@@ -57,19 +41,14 @@ class LabelBuilder(fb: FunctionBuilder) {
     _definitions += l.name -> body
   }
 
-  def end(): Code = {
-    for (l <- _labels) {
-      if (_definitions.get(l.name).isEmpty)
-        fatal(s"label created but never defined: ${l.name}")
-    }
+  def end(): Code =
     s"""
        |${Code.sequence(_labels.map { l => l.args.define })}
        |goto ${_hopOver};
-       |${Code.sequence(_labels.map { l =>
-            s"$l: { ${_definitions(l.name)} }"
+       |${Code.sequence(_definitions.toSeq.map { case (l, body) =>
+            s"$l: { $body }"
          })}
       |${_hopOver}:
      """.stripMargin
-  }
 
 }

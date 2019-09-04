@@ -328,23 +328,18 @@ case class StagedStream[A](
     stream.consumeRaw[T]((), pack, zero, (a, e, s, k) => oper(a, e, k), eos, missing)
 
   def fold[T](pack: ArgumentPack[T], zero: T)(oper: (T, A) => T): (Code, Code, T) = {
-    val m = fb.variable("m", "bool", "false")
-    val acc = pack.variables(fb, "acc")
-    val loop =
-      EmitLabel.withReturnCont(fb) { ret =>
-        consume[Unit](AP.unit, (),
-          (_, elt, k) => Code(acc.store(oper(acc.load, elt)), k(())),
-          _ => ret,
-          s"$m = true; $ret")
-      }
-    val setup =
-      s"""
-         |${m.define}
-         |${acc.define}
-         |${acc.store(zero)}
-         |$loop
-       """.stripMargin
-    (setup, m.toString, acc.load)
+    val exit = EmitLabel(fb, AP.boolean, "exit", "m")
+    val m = exit.args
+    val v = pack.variables(fb, "v")
+    val setup = Code(
+      m.define,
+      v.define,
+      consume[T](pack, zero,
+        (acc, elt, k) => k(oper(acc, elt)),
+        acc => Code(v.store(acc), exit("false")),
+        exit("true")),
+      s"$exit:")
+    (setup, m.load, v.load)
   }
 
   def map[B](newEltPack: ArgumentPack[B])(f: A => B) =

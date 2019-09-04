@@ -13,23 +13,26 @@ class ArgumentPackSuite extends TestNGSuite {
 
   @Test def testControlFlow() {
     val f = compileL1 { (fb, arg) =>
-      EmitLabel.withReturnCont(fb, P.int64) { k =>
-        val lb = new LabelBuilder(fb)
-        val loop = lb.label("loop", P.tuple2(P.int64, P.int64))
-        lb.define(loop) { case (acc, i) =>
-          s"""
-             |if ($i <= 0) {
-             |  ${k(acc)}
-             |} else {
-             |  ${loop((s"$acc * $i", s"$i - 1"))}
-             |}
-           """.stripMargin
-        }
+      val lb = new LabelBuilder(fb)
+      val loop = lb.label("loop", P.tuple2(P.int64, P.int64))
+      val exit = lb.label("exit", P.int64)
+      lb.define(loop) { case (acc, i) =>
         s"""
-           |${lb.end()}
-           |${loop(("1", arg))}
+           |if ($i <= 0) {
+           |  ${exit(acc)}
+           |} else {
+           |  ${loop((s"$acc * $i", s"$i - 1"))}
+           |}
          """.stripMargin
       }
+      s"""
+         |({
+         |  ${lb.end()}
+         |  ${loop(("1", arg))}
+         |  $exit:
+         |  ${exit.args.load};
+         |})
+       """.stripMargin
     }
 
     assert(f(1) == 1)
