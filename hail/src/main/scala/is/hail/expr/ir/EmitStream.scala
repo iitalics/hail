@@ -187,27 +187,21 @@ object EmitStream {
   ): Parameterized[P, (A, B)] = new Parameterized[P, (A, B)] {
     implicit val lsP = left.stateP
     implicit val rsP = right.stateP
-    // status == 2 iff there is no right state
-    // status == 1 iff there is no previous right element
-    // status == 0 otherwise
-    type Status = Code[Int]
-    type S = (left.S, (Status, right.S, B))
+    type S = (left.S, right.S, (B, Code[Boolean]))
     val stateP: ParameterPack[S] = implicitly
-    def dummyState = (left.dummyState, (2, right.dummyState, rNil))
+    def emptyState = (left.emptyState, right.emptyState, (rNil, false))
     def length(s0: S): Option[Code[Int]] = left.length(s0._1)
 
     def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(
       k: Init[S] => Code[Ctrl]
     ): Code[Ctrl] = {
-      val start = jb.joinPoint[(left.S, right.S, Status)](mb)
-      start.define { case (leftS, rightS, t) => k(Start((leftS, (t, rightS, rNil)))) }
+      val missing = jb.joinPoint()
+      missing.define { _ => k(Missing) }
       left.init(mb, jb, param) {
-        case Missing => k(Missing)
-        case Empty => k(Empty)
+        case Missing => missing(())
         case Start(lS) => right.init(mb, jb, param) {
-          case Missing => k(Missing)
-          case Empty => start((lS, right.dummyState, 2))
-          case Start(rS) => start((lS, rS, 1))
+          case Missing => missing(())
+          case Start(rS) => k(Start((lS, rS, (rNil, false))))
         }
       }
     }
@@ -215,19 +209,19 @@ object EmitStream {
     def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(
       k: Step[(A, B), S] => Code[Ctrl]
     ): Code[Ctrl] = {
-      val (lS0, r@(status, rS0, rPrev)) = state
+      val (lS0, rS0, (rPrev, somePrev)) = state
       left.step(mb, jb, lS0) {
         case EOS => k(EOS)
-        case Skip(lS) => k(Skip((lS, r)))
+        case Skip(lS) => k(Skip((lS, rS0, (rPrev, somePrev))))
         case Yield(lElt, lS) =>
-          val push = jb.joinPoint[(Status, right.S, (B, B))](mb)
+          val push = jb.joinPoint[(B, right.S, (B, Code[Boolean]))](mb)
           val pull = jb.joinPoint[right.S](mb)
           val compare = jb.joinPoint[(B, right.S)](mb)
-          push.define { case (status, rS, (rElt, rPrev)) =>
-            k(Yield((lElt, rElt), (lS, (status, rS, rPrev))))
+          push.define { case (rElt, rS, rPrevOpt) =>
+            k(Yield((lElt, rElt), (lS, rS, rPrevOpt)))
           }
           pull.define(right.step(mb, jb, _) {
-            case EOS => push((2, right.dummyState, (rNil, rNil)))
+            case EOS => push((rNil, right.emptyState, (rNil, false)))
             case Skip(rS) => pull(rS)
             case Yield(rElt, rS) => compare((rElt, rS))
           })
@@ -236,15 +230,13 @@ object EmitStream {
               (c > 0).mux(
                 pull(rS),
                 (c < 0).mux(
-                  push((0, rS, (rNil, rElt))),
-                  push((0, rS, (rElt, rElt)))))
+                  push((rNil, rS, (rElt, true))),
+                  push((rElt, rS, (rElt, true)))))
             }
           }
-          (status ceq 0).mux(
+          somePrev.mux(
             compare((rPrev, rS0)),
-            (status ceq 1).mux(
-              pull(rS0),
-              push((2, right.dummyState, (rNil, rNil)))))
+            pull(rS0))
       }
     }
   }
