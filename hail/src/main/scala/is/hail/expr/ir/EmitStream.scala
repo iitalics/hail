@@ -153,14 +153,13 @@ object EmitStream {
     implicit val innSP = inner.stateP
     type S = (outer.S, inner.S)
     val stateP: ParameterPack[S] = implicitly
-    def dummyState: S = (outer.dummyState, inner.dummyState)
+    def emptyState: S = (outer.emptyState, inner.emptyState)
     def length(s0: S): Option[Code[Int]] = None
 
     def init(mb: MethodBuilder, jb: JoinPointBuilder, param: A)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
       outer.init(mb, jb, param) {
         case Missing => k(Missing)
-        case Empty => k(Empty)
-        case Start(outS0) => k(Start((outS0, inner.dummyState)))
+        case Start(outS0) => k(Start((outS0, inner.emptyState)))
       }
 
     def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[C, S] => Code[Ctrl]): Code[Ctrl] = {
@@ -168,9 +167,9 @@ object EmitStream {
       inner.step(mb, jb, innS) {
         case EOS => outer.step(mb, jb, outS) {
           case EOS => k(EOS)
-          case Skip(outS1) => k(Skip((outS1, inner.dummyState)))
+          case Skip(outS1) => k(Skip((outS1, inner.emptyState)))
           case Yield(outElt, outS1) => inner.init(mb, jb, outElt) {
-            case Missing | Empty => k(Skip((outS1, inner.dummyState)))
+            case Missing => k(Skip((outS1, inner.emptyState)))
             case Start(innS1) => k(Skip((outS1, innS1)))
           }
         }
