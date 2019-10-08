@@ -180,6 +180,76 @@ object EmitStream {
     }
   }
 
+  def leftJoinRightDistinct[P, A, B: ParameterPack](
+    left: Parameterized[P, A],
+    right: Parameterized[P, B],
+    rNil: B,
+    comp: (A, B) => Code[Int]
+  ): Parameterized[P, (A, B)] = new Parameterized[P, (A, B)] {
+    implicit val lsP = left.stateP
+    implicit val rsP = right.stateP
+    // status == 2 iff there is no right state
+    // status == 1 iff there is no previous right element
+    // status == 0 otherwise
+    type Status = Code[Int]
+    type S = (left.S, (Status, right.S, B))
+    val stateP: ParameterPack[S] = implicitly
+    def dummyState = (left.dummyState, (2, right.dummyState, rNil))
+    def length(s0: S): Option[Code[Int]] = left.length(s0._1)
+
+    def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(
+      k: Init[S] => Code[Ctrl]
+    ): Code[Ctrl] = {
+      val start = jb.joinPoint[(left.S, right.S, Status)](mb)
+      start.define { case (leftS, rightS, t) => k(Start((leftS, (t, rightS, rNil)))) }
+      left.init(mb, jb, param) {
+        case Missing => k(Missing)
+        case Empty => k(Empty)
+        case Start(lS) => right.init(mb, jb, param) {
+          case Missing => k(Missing)
+          case Empty => start((lS, right.dummyState, 2))
+          case Start(rS) => start((lS, rS, 1))
+        }
+      }
+    }
+
+    def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(
+      k: Step[(A, B), S] => Code[Ctrl]
+    ): Code[Ctrl] = {
+      val (lS0, r@(status, rS0, rPrev)) = state
+      left.step(mb, jb, lS0) {
+        case EOS => k(EOS)
+        case Skip(lS) => k(Skip((lS, r)))
+        case Yield(lElt, lS) =>
+          val push = jb.joinPoint[(Status, right.S, (B, B))](mb)
+          val pull = jb.joinPoint[right.S](mb)
+          val compare = jb.joinPoint[(B, right.S)](mb)
+          push.define { case (status, rS, (rElt, rPrev)) =>
+            k(Yield((lElt, rElt), (lS, (status, rS, rPrev))))
+          }
+          pull.define(right.step(mb, jb, _) {
+            case EOS => push((2, right.dummyState, (rNil, rNil)))
+            case Skip(rS) => pull(rS)
+            case Yield(rElt, rS) => compare((rElt, rS))
+          })
+          compare.define { case (rElt, rS) =>
+            ParameterPack.localMemoize(mb, comp(lElt, rElt)) { c =>
+              (c > 0).mux(
+                pull(rS),
+                (c < 0).mux(
+                  push((0, rS, (rNil, rElt))),
+                  push((0, rS, (rElt, rElt)))))
+            }
+          }
+          (status ceq 0).mux(
+            compare((rPrev, rS0)),
+            (status ceq 1).mux(
+              pull(rS0),
+              push((2, right.dummyState, (rNil, rNil)))))
+      }
+    }
+  }
+
   private[ir] def apply(
     emitter: Emit,
     streamIR0: IR,
@@ -315,6 +385,35 @@ object EmitStream {
           val outer = emitPStream(outerIR, env, setupEnv)
           val inner = emitPStream(innerIR, innerEnv, setupInnerEnv)
           compose(outer, inner)
+
+        case ArrayLeftJoinDistinct(leftIR, rightIR, leftName, rightName, compIR, joinIR) =>
+          val l = leftIR.pType.asInstanceOf[PStreamable].elementType
+          val r = rightIR.pType.asInstanceOf[PStreamable].elementType
+          implicit val lP = TypedTriplet.pack(l)
+          implicit val rP = TypedTriplet.pack(r)
+          val (leltm, leltv) = lP.newFields(fb, "join_lelt")
+          val (reltm, reltv) = rP.newFields(fb, "join_relt")
+          val env2 = env
+            .bind(leftName -> ((typeToTypeInfo(l), leltm, leltv)))
+            .bind(rightName -> ((typeToTypeInfo(r), reltm, reltv)))
+          val compt = emitIR(compIR, env2)
+          val joint = emitIR(joinIR, env2)
+          leftJoinRightDistinct[E, TypedTriplet[l.type], TypedTriplet[r.type]](
+            emitPStream(leftIR, env, setupEnv).map(TypedTriplet(l, _)),
+            emitStream(rightIR, env).map(TypedTriplet(r, _)),
+            TypedTriplet.missing(r),
+            (lelt, relt) => Code(
+              lelt.storeTo(leltm, leltv),
+              relt.storeTo(reltm, reltv),
+              compt.setup,
+              compt.m.orEmpty(Code._fatal("ArrayLeftJoinDistinct: comp can't be missing")),
+              coerce[Int](compt.v))
+          )
+            .map { case (lelt, relt) =>
+              EmitTriplet(Code(
+                lelt.storeTo(leltm, leltv),
+                relt.storeTo(reltm, reltv),
+                joint.setup), joint.m, joint.v) }
 
         case _ =>
           fatal(s"not a streamable IR: ${Pretty(streamIR)}")
