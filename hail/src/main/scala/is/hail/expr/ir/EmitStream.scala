@@ -23,6 +23,7 @@ object EmitStream {
   trait Parameterized[-P, +A] { self =>
     type S
     val stateP: ParameterPack[S]
+    val name: String
 
     // - 'step' must maintain the following invariant: step(..., emptyState, k) = k(EOS); it should
     // hopefully be a cheap operation to compute this.
@@ -53,6 +54,7 @@ object EmitStream {
     ): Parameterized[Q, A] = new Parameterized[Q, A] {
       type S = self.S
       val stateP: ParameterPack[S] = self.stateP
+      val name = self.name
       def emptyState: S = self.emptyState
       def length(s0: S): Option[Code[Int]] = self.length(s0)
       def init(mb: MethodBuilder, jb: JoinPointBuilder, param: Q)(k: Init[S] => Code[Ctrl]): Code[Ctrl] = {
@@ -74,13 +76,15 @@ object EmitStream {
     }
 
     def map[B](f: A => B): Parameterized[P, B] =
-      contMap[B] { (a, k) => k(f(a)) }
+      contMap[B]({ (a, k) => k(f(a)) }, nameSuffix = "")
 
     def contMap[B](
-      f: (A, B => Code[Ctrl]) => Code[Ctrl]
+      f: (A, B => Code[Ctrl]) => Code[Ctrl],
+      nameSuffix: String = "_map"
     ): Parameterized[P, B] = new Parameterized[P, B] {
       type S = self.S
       val stateP: ParameterPack[S] = self.stateP
+      val name = self.name + nameSuffix
       def emptyState: S = self.emptyState
       def length(s0: S): Option[Code[Int]] = self.length(s0)
       def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
@@ -98,6 +102,7 @@ object EmitStream {
     def filterMap[B](f: (A, Option[B] => Code[Ctrl]) => Code[Ctrl]): Parameterized[P, B] = new Parameterized[P, B] {
       type S = self.S
       implicit val stateP: ParameterPack[S] = self.stateP
+      val name = s"${self.name}_filt"
       def emptyState: S = self.emptyState
       def length(s0: S): Option[Code[Int]] = None
       def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
@@ -122,6 +127,7 @@ object EmitStream {
       implicit val sP = self.stateP
       type S = (self.S, B, Code[Boolean])
       val stateP: ParameterPack[S] = implicitly
+      val name = s"${self.name}_scan"
       def emptyState: S = (self.emptyState, dummy, false)
       def length(s0: S): Option[Code[Int]] = self.length(s0._1).map(_ + 1)
 
@@ -148,6 +154,7 @@ object EmitStream {
   val missing: Parameterized[Any, Nothing] = new Parameterized[Any, Nothing] {
     type S = Unit
     val stateP: ParameterPack[S] = implicitly
+    val name = "na"
     def emptyState: S = ()
     def length(s0: S): Option[Code[Int]] = Some(0)
     def init(mb: MethodBuilder, jb: JoinPointBuilder, param: Any)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
@@ -163,6 +170,7 @@ object EmitStream {
     // stream parameter will be the length of the stream
     type S = (Code[Int], Code[Int])
     val stateP: ParameterPack[S] = implicitly
+    val name = "range"
     def emptyState: S = (0, 0)
     def length(s0: S): Option[Code[Int]] = Some(s0._1)
 
@@ -178,6 +186,7 @@ object EmitStream {
   def sequence[A: ParameterPack](elements: Seq[A]): Parameterized[Any, A] = new Parameterized[Any, A] {
     type S = Code[Int]
     val stateP: ParameterPack[S] = implicitly
+    val name = s"seq${elements.length}"
     def emptyState: S = elements.length
     def length(s0: S): Option[Code[Int]] = Some(const(elements.length) - s0)
 
@@ -205,6 +214,7 @@ object EmitStream {
     implicit val innSP = inner.stateP
     type S = (outer.S, inner.S)
     val stateP: ParameterPack[S] = implicitly
+    val name = s"${outer.name}__C__${inner.name}"
     def emptyState: S = (outer.emptyState, inner.emptyState)
     def length(s0: S): Option[Code[Int]] = None
 
@@ -244,6 +254,7 @@ object EmitStream {
     implicit val rsP = right.stateP
     type S = (left.S, right.S, (B, Code[Boolean]))
     val stateP: ParameterPack[S] = implicitly
+    val name = s"${left.name}__LJ__${right.name}"
     def emptyState: S = (left.emptyState, right.emptyState, (rNil, false))
     def length(s0: S): Option[Code[Int]] = left.length(s0._1)
 
@@ -383,17 +394,17 @@ object EmitStream {
         case ArrayMap(childIR, name, bodyIR) =>
           val childEltType = childIR.pType.asInstanceOf[PStreamable].elementType
           val childEltTI = coerce[Any](typeToTypeInfo(childEltType))
-          emitStream(childIR, env).map { eltt =>
+          emitStream(childIR, env).contMap { (eltt, k) =>
             val eltm = fb.newField[Boolean](name + "_missing")
             val eltv = fb.newField(name)(childEltTI)
             val bodyt = emitIR(bodyIR, env.bind(name -> ((childEltTI, eltm, eltv))))
-            EmitTriplet(
+            k(EmitTriplet(
               Code(eltt.setup,
                 eltm := eltt.m,
                 eltv := eltm.mux(defaultValue(childEltType), eltt.v),
                 bodyt.setup),
               bodyt.m,
-              bodyt.v)
+              bodyt.v))
           }
 
         case ArrayFilter(childIR, name, condIR) =>
@@ -513,16 +524,16 @@ object EmitStream {
           val postt = emitter.emit(postAggIR, bodyEnv, None, er, Some(newContainer))
 
           emitStream(childIR, env)
-            .contMap[EmitTriplet] { (eltt, k) => Code(
+            .contMap[EmitTriplet]({ (eltt, k) => Code(
               TypedTriplet(e, eltt).storeTo(eltm, eltv),
               TypedTriplet(a, postt).storeTo(postm, postv),
               seqPerElt.setup,
               k(EmitTriplet(Code._empty, postm, postv)))
-            }
+            },
+              nameSuffix = "_aggscan")
             .addSetup(
               _ => Code(aggSetup, init.setup),
-              aggCleanup
-            )
+              aggCleanup)
 
         case _ =>
           fatal(s"not a streamable IR: ${Pretty(streamIR)}")
@@ -551,7 +562,7 @@ case class EmitStream(
     ArrayIteratorTriplet(
       stream.length(state.load),
       (cont: (Code[Boolean], Code[_]) => Code[Unit]) => {
-        val m = mb.newField[Boolean]("stream_missing")
+        val m = mb.newField[Boolean](s"${stream.name}__m")
 
         val setup =
           state := JoinPoint.CallCC[stream.S] { (jb, ret) =>
