@@ -316,13 +316,14 @@ object EmitStream {
       def step: (Code[Boolean], A) = (stepF.invoke(), getA)
       val stepF = fb.newMethod("STEP_" + stream.name, Array[TypeInfo[_]](), typeInfo[Boolean])
       stepF.emit(JoinPoint.CallCC[Code[Boolean]] { (jb, ret) =>
-        val loop = jb.joinPoint()
-        loop.define(_ => stream.step(stepF, jb, getS) {
+        implicit val sP = stream.stateP
+        val loop = jb.joinPoint[stream.S](stepF)
+        loop.define(stream.step(stepF, jb, _) {
           case EOS => ret(true)
-          case Skip(s) => Code(setS(s), loop(()))
+          case Skip(s) => loop(s)
           case Yield(a, s) => Code(setA(a), setS(s), ret(false))
         })
-        loop(())
+        loop(getS)
       })
     }
 
