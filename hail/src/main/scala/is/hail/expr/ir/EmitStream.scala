@@ -165,7 +165,7 @@ object EmitStream {
   ): Parameterized[P, A] = new Parameterized[P, A] {
     type S = Code[Int]
     val stateP: ParameterPack[S] = implicitly
-    val name = s"seq_${elements.length}"
+    val name = s"seq${elements.length}"
     def emptyState: S = elements.length
     def length(s0: S): Option[Code[Int]] = Some(elements.length)
 
@@ -175,7 +175,7 @@ object EmitStream {
     def step(mb: MethodBuilder, jb: JoinPointBuilder, idx: S)(k: Step[A, S] => Code[Ctrl]): Code[Ctrl] = {
       val eos = jb.joinPoint()
       eos.define { _ => k(EOS) }
-      JoinPoint.switch(idx, eos, elements.map { elt =>
+      JoinPoint.switch(idx, eos, elements.zipWithIndex.map { case (elt, idx) =>
         val j = jb.joinPoint()
         j.define { _ => k(Yield(elt, idx + 1)) }
         j
