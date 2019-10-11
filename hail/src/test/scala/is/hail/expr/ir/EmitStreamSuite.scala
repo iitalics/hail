@@ -1,5 +1,7 @@
 package is.hail.expr.ir
 
+import java.io.{PrintWriter, File}
+
 import is.hail.annotations.{Region, SafeRow, ScalaToRegionValue}
 import is.hail.asm4s._
 import is.hail.asm4s.joinpoint._
@@ -13,8 +15,16 @@ import org.scalatest.testng.TestNGSuite
 import org.testng.annotations.Test
 
 class EmitStreamSuite extends TestNGSuite {
+  case class OutFile(path: Option[String]) {
+    def printWriter(): Option[PrintWriter] =
+      path.map { path => new PrintWriter(new File(path)) }
+  }
 
-  private def compileStream(streamIR: IR, inputPType: PType): Any => IndexedSeq[Any] = {
+  implicit val outFile = OutFile(None)
+
+  private def compileStream(streamIR: IR, inputPType: PType)(
+    implicit outFile: OutFile
+  ): Any => IndexedSeq[Any] = {
     val fb = EmitFunctionBuilder[Region, Long, Boolean, Long]("eval_stream")
     val stream = EmitStream(fb, streamIR)
     val eltPType = stream.elementType
@@ -23,7 +33,7 @@ class EmitStreamSuite extends TestNGSuite {
       val arrayt = ait.toEmitTriplet(fb.apply_method, PArray(eltPType))
       Code(arrayt.setup, arrayt.m.mux(0L, arrayt.v))
     }
-    val f = fb.resultWithIndex()
+    val f = fb.resultWithIndex(outFile.printWriter())
     ({ arg: Any => Region.scoped { r =>
       val off =
         if(arg == null)
@@ -37,8 +47,8 @@ class EmitStreamSuite extends TestNGSuite {
     } })
   }
 
-  private def evalStream(streamIR: IR): IndexedSeq[Any] =
-    compileStream(streamIR, PStruct.empty())(null)
+  private def evalStream(streamIR: IR)(implicit outFile: OutFile): IndexedSeq[Any] =
+    compileStream(streamIR, PStruct.empty()).apply(null)
 
   private def evalStreamLen(streamIR: IR): Option[Int] = {
     val fb = EmitFunctionBuilder[Region, Int]("eval_stream_len")
