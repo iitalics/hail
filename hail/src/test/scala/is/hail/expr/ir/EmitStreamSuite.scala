@@ -44,18 +44,9 @@ class EmitStreamSuite extends TestNGSuite {
     val fb = EmitFunctionBuilder[Region, Int]("eval_stream_len")
     val stream = EmitStream(fb, streamIR)
     fb.emit {
-      JoinPoint.CallCC[Code[Int]] { (jb, ret) =>
-        val str = stream.stream
-        val mb = fb.apply_method
-        str.init(mb, jb, ()) {
-          case EmitStream.Missing => ret(0)
-          case EmitStream.Start(s0) =>
-            str.length(s0) match {
-              case Some(len) => ret(len)
-              case None => ret(-1)
-            }
-        }
-      }
+      val str = stream.stream
+      val mb = fb.apply_method
+      str.init.mux(0, str.len.getOrElse(const(-1)))
     }
     val f = fb.resultWithIndex()
     Region.scoped { r =>
