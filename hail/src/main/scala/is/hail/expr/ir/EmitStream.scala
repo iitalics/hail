@@ -334,10 +334,12 @@ object EmitStream {
     er: EmitRegion,
     container: Option[AggContainer]
   ): EmitStream = {
+    val origMB: EmitMethodBuilder = emitter.mb
     val fb = emitter.mb.fb
 
-    def emitIR(ir: IR, env: Emit.E): EmitTriplet =
-      emitter.emit(ir, env, rvas, er, container)
+    def emitIR(mb: EmitMethodBuilder, ir: IR, env: Emit.E): EmitTriplet =
+      (new Emit(mb, emitter.nSpecialArguments))
+        .emit(ir, env, rvas, EmitRegion.default(mb), container)
 
     def emitStream(streamIR: IR, env: Emit.E): Parameterized[Any, EmitTriplet] =
       emitPStream[Any](streamIR, env, _ => Code._empty)
@@ -349,7 +351,7 @@ object EmitStream {
           missing
 
         case MakeStream(elements, pType) =>
-          sequence(setupEnv, elements.map(emitIR(_, env)))
+          sequence(setupEnv, elements.map(emitIR(origMB, _, env)))
 
         case StreamRange(startIR, stopIR, stepIR) =>
           val step = fb.newField[Int]("sr_step")
@@ -358,9 +360,9 @@ object EmitStream {
           val llen = fb.newField[Long]("sr_llen")
           range[E](
             (e, k) => {
-              val startt = emitIR(startIR, env)
-              val stopt = emitIR(stopIR, env)
-              val stept = emitIR(stepIR, env)
+              val startt = emitIR(origMB, startIR, env)
+              val stopt = emitIR(origMB, stopIR, env)
+              val stept = emitIR(origMB, stepIR, env)
               Code(setupEnv(e), startt.setup, stopt.setup, stept.setup,
                 (startt.m || stopt.m || stept.m).mux(
                   k(None),
@@ -388,7 +390,7 @@ object EmitStream {
           val len = pType.loadLength(region, aoff)
           range[E](
             (e, k) => {
-              val arrt = emitIR(containerIR, env)
+              val arrt = emitIR(origMB, containerIR, env)
               Code(setupEnv(e),
                 arrt.setup,
                 arrt.m.mux(k(None), Code(aoff := arrt.value, k(Some((len, 0))))))
@@ -406,7 +408,7 @@ object EmitStream {
           val valueTI = coerce[Any](typeToTypeInfo(valueType))
           val vm = fb.newField[Boolean](name + "_missing")
           val vv = fb.newField(name)(valueTI)
-          val valuet = emitIR(valueIR, env)
+          val valuet = emitIR(origMB, valueIR, env)
           val bodyEnv = env.bind(name -> ((valueTI, vm, vv)))
           def setupBodyEnv(e: E): Code[Unit] =
             Code(setupEnv(e),
@@ -421,7 +423,7 @@ object EmitStream {
           emitPStream(childIR, env, setupEnv).contMap { (eltt, k) =>
             val eltm = fb.newField[Boolean](name + "_missing")
             val eltv = fb.newField(name)(childEltTI)
-            val bodyt = emitIR(bodyIR, env.bind(name -> ((childEltTI, eltm, eltv))))
+            val bodyt = emitIR(origMB, bodyIR, env.bind(name -> ((childEltTI, eltm, eltv))))
             k(EmitTriplet(
               Code(eltt.setup,
                 eltm := eltt.m,
@@ -437,7 +439,7 @@ object EmitStream {
           emitPStream(childIR, env, setupEnv).filterMap { (eltt, k) =>
             val eltm = fb.newField[Boolean](name + "_missing")
             val eltv = fb.newField(name)(childEltTI)
-            val condt = emitIR(condIR, env.bind(name -> ((childEltTI, eltm, eltv))))
+            val condt = emitIR(origMB, condIR, env.bind(name -> ((childEltTI, eltm, eltv))))
             Code(
               eltt.setup,
               eltm := eltt.m,
@@ -472,8 +474,8 @@ object EmitStream {
           val env2 = env
             .bind(leftName -> ((typeToTypeInfo(l), lelt.m, lelt.v)))
             .bind(rightName -> ((typeToTypeInfo(r), relt.m, relt.v)))
-          val compt = emitIR(compIR, env2)
-          val joint = emitIR(joinIR, env2)
+          val compt = emitIR(origMB, compIR, env2)
+          val joint = emitIR(origMB, joinIR, env2)
           leftJoinRightDistinct[E, TypedTriplet[l.type], TypedTriplet[r.type]](
             emitPStream(leftIR, env, setupEnv).map(TypedTriplet(l, _)),
             emitStream(rightIR, env).map(TypedTriplet(r, _)),
@@ -498,8 +500,8 @@ object EmitStream {
           implicit val aP = TypedTriplet.pack(a)
           val (setElt, elt) = eP.newFields(fb, "scan_elt")
           val (setAcc, acc) = aP.newFields(fb, "scan_acc")
-          val zerot = emitIR(zeroIR, env)
-          val bodyt = emitIR(bodyIR, env
+          val zerot = emitIR(origMB, zeroIR, env)
+          val bodyt = emitIR(origMB, bodyIR, env
             .bind(accName -> ((typeToTypeInfo(a), acc.m, acc.v)))
             .bind(eltName -> ((typeToTypeInfo(e), elt.m, elt.v))))
           emitPStream(childIR, env, setupEnv).scan(TypedTriplet.missing(a))(
