@@ -87,6 +87,7 @@ class EmitStreamSuite extends TestNGSuite {
   }
 
   @Test def testEmitRange() {
+    implicit val outFile = OutFile(Some(s"a_range.bc.java"))
     val tripleType = PStruct(false, "start" -> PInt32(), "stop" -> PInt32(), "step" -> PInt32())
     val triple = In(0, tripleType.virtualType)
     val range = compileStream(
@@ -120,6 +121,7 @@ class EmitStreamSuite extends TestNGSuite {
   }
 
   @Test def testEmitLet() {
+    implicit val outFile = OutFile(Some("a_let.bc.java"))
     val Seq(start, end, i) = Seq("start", "end", "i").map(Ref(_, TInt32()))
     val ir =
       Let("end", 10,
@@ -143,7 +145,8 @@ class EmitStreamSuite extends TestNGSuite {
       ArrayMap(ArrayMap(ten, "x", x + 1), "y", y * y) -> (0 until 10).map(i => (i + 1) * (i + 1)),
       ArrayMap(ten, "x", NA(TInt32())) -> IndexedSeq.tabulate(10) { _ => null }
     )
-    for ((ir, v) <- tests) {
+    for (((ir, v), i) <- tests.zipWithIndex) {
+      implicit val outFile = OutFile(Some(s"a_map_${i}.bc.java"))
       assert(evalStream(ir) == v, Pretty(ir))
       assert(evalStreamLen(ir) == Some(v.length), Pretty(ir))
     }
