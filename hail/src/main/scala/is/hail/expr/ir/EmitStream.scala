@@ -288,18 +288,23 @@ object EmitStream {
   }
 
   def wrapMethods[A](
-    fb: FunctionBuilder[_],
+    mb: EmitMethodBuilder,
     stream: Parameterized[Any, A]
   )(implicit aP: ParameterPack[A]): Imperative[A] =
     new Imperative[A] {
+      import mb.{fb, parameterTypeInfo}
+      val parameters = parameterTypeInfo.zipWithIndex.map {
+        case (ti, i) => fb.getArg(i + 1)(ti).load
+      }
+
       val (setS, getS) = stream.stateP.newFields(fb, stream.name + "_S")
       val (setA, getA) = aP.newFields(fb, stream.name + "_ELT")
       val _len = fb.newField[Int](stream.name + "_LEN")
 
       def len: Option[Code[Int]] = stream.length(getS).map(_ => _len.load)
 
-      def init: Code[Boolean] = initF.invoke()
-      val initF = fb.newMethod("INIT_" + stream.name, Array[TypeInfo[_]](), typeInfo[Boolean])
+      def init: Code[Boolean] = initF.invoke(parameters: _*)
+      val initF = fb.newMethod("INIT_" + stream.name, parameterTypeInfo, typeInfo[Boolean])
       initF.emit(JoinPoint.CallCC[Code[Boolean]] { (jb, ret) =>
         stream.init(initF, jb, ()) {
           case Missing => ret(true)
@@ -313,8 +318,8 @@ object EmitStream {
         }
       })
 
-      def step: (Code[Boolean], A) = (stepF.invoke(), getA)
-      val stepF = fb.newMethod("STEP_" + stream.name, Array[TypeInfo[_]](), typeInfo[Boolean])
+      def step: (Code[Boolean], A) = (stepF.invoke(parameters: _*), getA)
+      val stepF = fb.newMethod("STEP_" + stream.name, parameterTypeInfo, typeInfo[Boolean])
       stepF.emit(JoinPoint.CallCC[Code[Boolean]] { (jb, ret) =>
         implicit val sP = stream.stateP
         val loop = jb.joinPoint[stream.S](stepF)
@@ -564,7 +569,8 @@ object EmitStream {
       implicit val _ = TypedTriplet.pack(elementType)
 
       val stream =
-        wrapMethods(fb,
+        wrapMethods(
+          emitter.mb,
           emitStream(streamIR0, env0).map(TypedTriplet(elementType, _)))
     }
   }
