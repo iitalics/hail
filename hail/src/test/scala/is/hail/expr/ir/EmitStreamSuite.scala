@@ -56,7 +56,7 @@ class EmitStreamSuite extends TestNGSuite {
     fb.emit {
       val str = stream.stream
       val mb = fb.apply_method
-      str.init.mux(0, str.len.getOrElse(const(-1)))
+      str.init.mux(0, str.length.getOrElse(const(-1)))
     }
     val f = fb.resultWithIndex()
     Region.scoped { r =>

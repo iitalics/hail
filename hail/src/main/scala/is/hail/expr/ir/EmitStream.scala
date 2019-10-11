@@ -282,7 +282,7 @@ object EmitStream {
   }
 
   trait Imperative[A] { self =>
-    def len: Option[Code[Int]]
+    def length: Option[Code[Int]]
     def init: Code[Boolean]
     def step: (Code[Boolean], A)
   }
@@ -299,9 +299,11 @@ object EmitStream {
 
       val (setS, getS) = stream.stateP.newFields(fb, stream.name + "_S")
       val (setA, getA) = aP.newFields(fb, stream.name + "_ELT")
-      val _len = fb.newField[Int](stream.name + "_LEN")
+      val lenInfo = stream.length(getS).map { getLen =>
+        (getLen, fb.newField[Int](stream.name + "_LEN"))
+      }
 
-      def len: Option[Code[Int]] = stream.length(getS).map(_ => _len.load)
+      def length: Option[Code[Int]] = lenInfo.map(_._2.load)
 
       def init: Code[Boolean] = initF.invoke(parameters: _*)
       val initF = fb.newMethod("INIT_" + stream.name, parameterTypeInfo, typeInfo[Boolean])
@@ -310,8 +312,8 @@ object EmitStream {
           case Missing => ret(true)
           case Start(s0) => Code(
             setS(s0),
-            stream.length(getS) match {
-              case Some(l) => _len := l
+            lenInfo match {
+              case Some((getLen, len)) => len := getLen
               case None => Code._empty
             },
             ret(false))
@@ -587,7 +589,7 @@ trait EmitStream {
   def toArrayIterator(mb: MethodBuilder): ArrayIteratorTriplet =
     ArrayIteratorTriplet(
       Code._empty,
-      None, // stream.len,
+      stream.length,
       (cont: (Code[Boolean], Code[_]) => Code[Unit]) => {
         val addElements = JoinPoint.CallCC[Unit] { (jb, ret) =>
           val (step, elt) = stream.step
