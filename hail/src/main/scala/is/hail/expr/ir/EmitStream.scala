@@ -139,8 +139,8 @@ object EmitStream {
   }
 
   def range[P](
-    // initialize(param, k) = ...k(None) or k(Some((len, start)))...
-    initialize: (P, Option[(Code[Int], Code[Int])] => Code[Ctrl]) => Code[Ctrl],
+    // initialize(mb, param, k) = ...k(None) or k(Some((len, start)))...
+    initialize: (EmitMethodBuilder, P, Option[(Code[Int], Code[Int])] => Code[Ctrl]) => Code[Ctrl],
     incr: Code[Int] => Code[Int]
   ): Parameterized[P, Code[Int]] = new Parameterized[P, Code[Int]] {
     type S = (Code[Int], Code[Int])
@@ -150,7 +150,7 @@ object EmitStream {
     def length(s0: S): Option[Code[Int]] = Some(s0._1)
 
     def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
-      initialize(param, {
+      initialize(mb, param, {
         case None => k(Missing)
         case Some(s0) => k(Start(s0))
       })
@@ -163,7 +163,7 @@ object EmitStream {
 
   def sequence[P, A](
     initialize: P => Code[Unit],
-    elements: Seq[A]
+    elements: Seq[EmitMethodBuilder => A]
   ): Parameterized[P, A] = new Parameterized[P, A] {
     type S = Code[Int]
     val stateP: ParameterPack[S] = implicitly
@@ -179,7 +179,7 @@ object EmitStream {
       eos.define { _ => k(EOS) }
       JoinPoint.switch(idx, eos, elements.zipWithIndex.map { case (elt, idx) =>
         val j = jb.joinPoint()
-        j.define { _ => k(Yield(elt, idx + 1)) }
+        j.define { _ => k(Yield(elt(mb), idx + 1)) }
         j
       })
     }
@@ -361,7 +361,7 @@ object EmitStream {
           missing
 
         case MakeStream(elements, pType) =>
-          sequence(setupEnv, elements.map(emitIR(origMB, _, env)))
+          sequence(setupEnv, elements.map(ir => (mb: EmitMethodBuilder) => emitIR(mb, ir, env)))
 
         case StreamRange(startIR, stopIR, stepIR) =>
           val step = fb.newField[Int]("sr_step")
@@ -369,10 +369,10 @@ object EmitStream {
           val stop = fb.newField[Int]("sr_stop")
           val llen = fb.newField[Long]("sr_llen")
           range[E](
-            (e, k) => {
-              val startt = emitIR(origMB, startIR, env)
-              val stopt = emitIR(origMB, stopIR, env)
-              val stept = emitIR(origMB, stepIR, env)
+            (mb, e, k) => {
+              val startt = emitIR(mb, startIR, env)
+              val stopt = emitIR(mb, stopIR, env)
+              val stept = emitIR(mb, stepIR, env)
               Code(setupEnv(e), startt.setup, stopt.setup, stept.setup,
                 (startt.m || stopt.m || stept.m).mux(
                   k(None),
@@ -397,13 +397,14 @@ object EmitStream {
           val eltPType = pType.elementType
           val region = er.region
           val aoff = fb.newField[Long]("a_off")
-          val len = pType.loadLength(region, aoff)
           range[E](
-            (e, k) => {
-              val arrt = emitIR(origMB, containerIR, env)
+            (mb, e, k) => {
+              val arrt = emitIR(mb, containerIR, env)
               Code(setupEnv(e),
                 arrt.setup,
-                arrt.m.mux(k(None), Code(aoff := arrt.value, k(Some((len, 0))))))
+                arrt.m.mux(
+                  k(None),
+                  Code(aoff := arrt.value, k(Some((pType.loadLength(region, aoff), 0))))))
             },
             i => i + 1
           )

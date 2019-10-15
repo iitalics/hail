@@ -196,6 +196,20 @@ class EmitStreamSuite extends TestNGSuite {
     }
   }
 
+  @Test def testEmitFlatMap2() {
+    implicit val outFile = OutFile(Some("a_flatmap_2.bc.java"))
+    val ta = TArray(TInt32())
+    val taa = TArray(ta)
+    val a = MakeArray(FastIndexedSeq(
+      MakeArray(FastIndexedSeq(I32(7), NA(TInt32())), ta),
+      NA(ta),
+      MakeArray(FastIndexedSeq(I32(2)), ta)),
+      taa)
+    val ir = ArrayFlatMap(StreamRange(I32(0), I32(3), I32(1)),
+      "i", ToStream(ArrayRef(a, Ref("i", TInt32()))))
+    assert(evalStream(ir) == FastIndexedSeq(7, null, 2), Pretty(ir))
+  }
+
   @Test def testEmitLeftJoinDistinct() {
     val tupTyp = TTuple(TInt32(), TString())
     val Seq(l, r) = Seq("l", "r").map(Ref(_, tupTyp))
