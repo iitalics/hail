@@ -47,11 +47,11 @@ object EmitStream {
     )(k: Step[A, S] => Code[Ctrl]): Code[Ctrl]
 
     def map[B](f: A => B): Parameterized[P, B] =
-      contMap[B]({ (a, k) => k(f(a)) }, nameSuffix = "")
+      contMap[B]({ (mb, a, k) => k(f(a)) }, nameSuffix = "")
 
     def contMap[B](
-      f: (A, B => Code[Ctrl]) => Code[Ctrl],
-      setup: Code[Unit] = Code._empty,
+      f: (EmitMethodBuilder, A, B => Code[Ctrl]) => Code[Ctrl],
+      setup: (EmitMethodBuilder => Code[Unit]) = (_ => Code._empty),
       cleanup: Code[Unit] = Code._empty,
       nameSuffix: String = "_map"
     ): Parameterized[P, B] = new Parameterized[P, B] {
@@ -63,13 +63,13 @@ object EmitStream {
       def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
         self.init(mb, jb, param) {
           case Missing => k(Missing)
-          case Start(s) => Code(setup, k(Start(s)))
+          case Start(s) => Code(setup(mb), k(Start(s)))
         }
       def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] =
         self.step(mb, jb, state) {
           case EOS => Code(cleanup, k(EOS))
           case Skip(s) => k(Skip(s))
-          case Yield(a, s) => f(a, b => k(Yield(b, s)))
+          case Yield(a, s) => f(mb, a, b => k(Yield(b, s)))
         }
     }
 
@@ -430,10 +430,10 @@ object EmitStream {
         case ArrayMap(childIR, name, bodyIR) =>
           val childEltType = childIR.pType.asInstanceOf[PStreamable].elementType
           val childEltTI = coerce[Any](typeToTypeInfo(childEltType))
-          emitPStream(childIR, env, setupEnv).contMap { (eltt, k) =>
+          emitPStream(childIR, env, setupEnv).contMap { (mb, eltt, k) =>
             val eltm = fb.newField[Boolean](name + "_missing")
             val eltv = fb.newField(name)(childEltTI)
-            val bodyt = emitIR(origMB, bodyIR, env.bind(name -> ((childEltTI, eltm, eltv))))
+            val bodyt = emitIR(mb, bodyIR, env.bind(name -> ((childEltTI, eltm, eltv))))
             k(EmitTriplet(
               Code(eltt.setup,
                 eltm := eltt.m,
@@ -550,17 +550,25 @@ object EmitStream {
           val (setElt, elt) = eP.newFields(fb, "aggscan_elt")
           val (setNewElt, newElt) = neP.newFields(fb, "aggscan_new_elt")
           val bodyEnv = env.bind(name -> ((typeToTypeInfo(e), elt.m, elt.v)))
-          val init = emitter.emit(initIR, env, None, er, Some(newContainer))
-          val seqPerElt = emitter.emit(seqPerEltIR, bodyEnv, None, er, Some(newContainer))
-          val post = emitter.emit(postAggIR, bodyEnv, None, er, Some(newContainer))
+
+          def emit(mb: EmitMethodBuilder, ir: IR, env: Emit.E): EmitTriplet =
+            (new Emit(mb, emitter.nSpecialArguments))
+              .emit(ir, env, None, er, Some(newContainer))
 
           emitPStream(childIR, env, setupEnv).contMap(
-            (eltt, k) => Code(
-              setElt(TypedTriplet(e, eltt)),
-              setNewElt(TypedTriplet(ne, post)),
-              seqPerElt.setup,
-              k(EmitTriplet(Code._empty, newElt.m, newElt.v))),
-            Code(aggSetup, init.setup),
+            (mb, eltt, k) => {
+              val seqt = emit(mb, seqPerEltIR, bodyEnv)
+              val newEltt = emit(mb, postAggIR, bodyEnv)
+              Code(
+                setElt(TypedTriplet(e, eltt)),
+                setNewElt(TypedTriplet(ne, newEltt)),
+                seqt.setup,
+                k(EmitTriplet(Code._empty, newElt.m, newElt.v)))
+            },
+            mb => {
+              val initt = emit(mb, initIR, env)
+              Code(aggSetup, initt.setup)
+            },
             aggCleanup,
             nameSuffix = "_aggscan")
 
