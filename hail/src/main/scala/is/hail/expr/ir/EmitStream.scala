@@ -560,7 +560,7 @@ object EmitStream {
               k(EmitTriplet(Code._empty, newElt.m, newElt.v))),
             Code(aggSetup, init.setup),
             aggCleanup,
-            nameSuffix = "aggscan")
+            nameSuffix = "_aggscan")
 
         case _ =>
           fatal(s"not a streamable IR: ${Pretty(streamIR)}")
