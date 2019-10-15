@@ -73,7 +73,9 @@ object EmitStream {
         }
     }
 
-    def filterMap[B](f: (A, Option[B] => Code[Ctrl]) => Code[Ctrl]): Parameterized[P, B] = new Parameterized[P, B] {
+    def filterMap[B](
+      f: (EmitMethodBuilder, A, Option[B] => Code[Ctrl]) => Code[Ctrl]
+    ): Parameterized[P, B] = new Parameterized[P, B] {
       type S = self.S
       val stateP = self.stateP
       val name = s"${self.name}_filt"
@@ -85,7 +87,7 @@ object EmitStream {
         self.step(mb, jb, state) {
           case EOS => k(EOS)
           case Skip(s) => k(Skip(s))
-          case Yield(a, s) => f(a, {
+          case Yield(a, s) => f(mb, a, {
             case None => k(Skip(s))
             case Some(b) => k(Yield(b, s))
           })
@@ -444,10 +446,10 @@ object EmitStream {
         case ArrayFilter(childIR, name, condIR) =>
           val childEltType = childIR.pType.asInstanceOf[PStreamable].elementType
           val childEltTI = coerce[Any](typeToTypeInfo(childEltType))
-          emitPStream(childIR, env, setupEnv).filterMap { (eltt, k) =>
+          emitPStream(childIR, env, setupEnv).filterMap { (mb, eltt, k) =>
             val eltm = fb.newField[Boolean](name + "_missing")
             val eltv = fb.newField(name)(childEltTI)
-            val condt = emitIR(origMB, condIR, env.bind(name -> ((childEltTI, eltm, eltv))))
+            val condt = emitIR(mb, condIR, env.bind(name -> ((childEltTI, eltm, eltv))))
             Code(
               eltt.setup,
               eltm := eltt.m,
