@@ -29,7 +29,7 @@ class EmitStreamSuite extends TestNGSuite {
     val stream = EmitStream(fb, streamIR)
     val eltPType = stream.elementType
     fb.emit {
-      val ait = stream.toArrayIterator(fb.apply_method)
+      val ait = stream.toArrayIterator
       val arrayt = ait.toEmitTriplet(fb.apply_method, PArray(eltPType))
       Code(arrayt.setup, arrayt.m.mux(0L, arrayt.v))
     }

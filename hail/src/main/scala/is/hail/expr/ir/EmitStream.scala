@@ -586,7 +586,7 @@ trait EmitStream {
   val elementType: PType
   val stream: EmitStream.Imperative[TypedTriplet[elementType.type]]
 
-  def toArrayIterator(mb: MethodBuilder): ArrayIteratorTriplet =
+  def toArrayIterator: ArrayIteratorTriplet =
     ArrayIteratorTriplet(
       Code._empty,
       stream.length,

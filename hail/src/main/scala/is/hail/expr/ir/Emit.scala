@@ -1796,7 +1796,7 @@ private class Emit(
       case ToStream(x) =>
         println(s"falling back: ${Pretty(x)}")
         emitOldArrayIterator(x, env, rvas, er, container)
-      case x => EmitStream(this, x, env, rvas, er, container).toArrayIterator(mb)
+      case x => EmitStream(this, x, env, rvas, er, container).toArrayIterator
     }
 
   private def emitOldArrayIterator(ir: IR, env: E, rvas: Emit.RVAS, er: EmitRegion, container: Option[AggContainer]): ArrayIteratorTriplet = {
