@@ -35,13 +35,13 @@ object EmitStream {
     def length(s0: S): Option[Code[Int]]
 
     def init(
-      mb: MethodBuilder,
+      mb: EmitMethodBuilder,
       jb: JoinPointBuilder,
       param: P
     )(k: Init[S] => Code[Ctrl]): Code[Ctrl]
 
     def step(
-      mb: MethodBuilder,
+      mb: EmitMethodBuilder,
       jb: JoinPointBuilder,
       state: S
     )(k: Step[A, S] => Code[Ctrl]): Code[Ctrl]
@@ -60,12 +60,12 @@ object EmitStream {
       val name = self.name + nameSuffix
       def emptyState = self.emptyState
       def length(s0: S): Option[Code[Int]] = self.length(s0)
-      def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+      def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
         self.init(mb, jb, param) {
           case Missing => k(Missing)
           case Start(s) => Code(setup, k(Start(s)))
         }
-      def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] =
+      def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] =
         self.step(mb, jb, state) {
           case EOS => Code(cleanup, k(EOS))
           case Skip(s) => k(Skip(s))
@@ -79,9 +79,9 @@ object EmitStream {
       val name = s"${self.name}_filt"
       def emptyState = self.emptyState
       def length(s0: S): Option[Code[Int]] = None
-      def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+      def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
         self.init(mb, jb, param)(k)
-      def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] =
+      def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] =
         self.step(mb, jb, state) {
           case EOS => k(EOS)
           case Skip(s) => k(Skip(s))
@@ -103,13 +103,13 @@ object EmitStream {
       def emptyState: S = (self.emptyState, dummy, false)
       def length(s0: S): Option[Code[Int]] = self.length(s0._1).map(_ + 1)
 
-      def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+      def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
         self.init(mb, jb, param) {
           case Missing => k(Missing)
           case Start(s0) => k(Start((s0, zero, true)))
         }
 
-      def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] = {
+      def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[B, S] => Code[Ctrl]): Code[Ctrl] = {
         val yield_ = jb.joinPoint[(B, self.S)](mb)
         yield_.define { case (b, s1) => k(Yield(b, (s1, b, false))) }
         val (s, b, isFirstStep) = state
@@ -130,9 +130,9 @@ object EmitStream {
     val name = "na"
     def emptyState: S = ()
     def length(s0: S): Option[Code[Int]] = Some(0)
-    def init(mb: MethodBuilder, jb: JoinPointBuilder, param: Any)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+    def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: Any)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
       k(Missing)
-    def step(mb: MethodBuilder, jb: JoinPointBuilder, s: S)(k: Step[Nothing, S] => Code[Ctrl]): Code[Ctrl] =
+    def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, s: S)(k: Step[Nothing, S] => Code[Ctrl]): Code[Ctrl] =
       k(EOS)
   }
 
@@ -147,13 +147,13 @@ object EmitStream {
     def emptyState: S = (0, 0)
     def length(s0: S): Option[Code[Int]] = Some(s0._1)
 
-    def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+    def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
       initialize(param, {
         case None => k(Missing)
         case Some(s0) => k(Start(s0))
       })
 
-    def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[Code[Int], S] => Code[Ctrl]): Code[Ctrl] = {
+    def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[Code[Int], S] => Code[Ctrl]): Code[Ctrl] = {
       val (pos, idx) = state
       stepIf(k, pos > 0, idx, (pos - 1, incr(idx)))
     }
@@ -169,10 +169,10 @@ object EmitStream {
     def emptyState: S = elements.length
     def length(s0: S): Option[Code[Int]] = Some(elements.length)
 
-    def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+    def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
       Code(initialize(param), k(Start(0)))
 
-    def step(mb: MethodBuilder, jb: JoinPointBuilder, idx: S)(k: Step[A, S] => Code[Ctrl]): Code[Ctrl] = {
+    def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, idx: S)(k: Step[A, S] => Code[Ctrl]): Code[Ctrl] = {
       val eos = jb.joinPoint()
       eos.define { _ => k(EOS) }
       JoinPoint.switch(idx, eos, elements.zipWithIndex.map { case (elt, idx) =>
@@ -195,13 +195,13 @@ object EmitStream {
     def emptyState: S = (outer.emptyState, inner.emptyState)
     def length(s0: S): Option[Code[Int]] = None
 
-    def init(mb: MethodBuilder, jb: JoinPointBuilder, param: A)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
+    def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: A)(k: Init[S] => Code[Ctrl]): Code[Ctrl] =
       outer.init(mb, jb, param) {
         case Missing => k(Missing)
         case Start(outS0) => k(Start((outS0, inner.emptyState)))
       }
 
-    def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[C, S] => Code[Ctrl]): Code[Ctrl] = {
+    def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(k: Step[C, S] => Code[Ctrl]): Code[Ctrl] = {
       val (outS, innS) = state
       inner.step(mb, jb, innS) {
         case EOS => outer.step(mb, jb, outS) {
@@ -232,7 +232,7 @@ object EmitStream {
     def emptyState = (left.emptyState, right.emptyState, (rNil, false))
     def length(s0: S): Option[Code[Int]] = left.length(s0._1)
 
-    def init(mb: MethodBuilder, jb: JoinPointBuilder, param: P)(
+    def init(mb: EmitMethodBuilder, jb: JoinPointBuilder, param: P)(
       k: Init[S] => Code[Ctrl]
     ): Code[Ctrl] = {
       val missing = jb.joinPoint()
@@ -246,7 +246,7 @@ object EmitStream {
       }
     }
 
-    def step(mb: MethodBuilder, jb: JoinPointBuilder, state: S)(
+    def step(mb: EmitMethodBuilder, jb: JoinPointBuilder, state: S)(
       k: Step[(A, B), S] => Code[Ctrl]
     ): Code[Ctrl] = {
       val (lS0, rS0, (rPrev, somePrev)) = state
