@@ -332,3 +332,15 @@ class Tests(unittest.TestCase):
             a = arrs[i]
             a2 = np.loadtxt(f'{prefix}/files/{i}.tsv')
             self.assertTrue(np.array_equal(a, a2))
+
+    def test_strings_reverse(self):
+        import hail.experimental.strings as hl_str
+        assert(hl.eval(hl_str.reverse('hello world')) == 'dlrow olleh')
+        assert(hl.eval(hl_str.reverse('')) == '')
+        assert(hl.eval(hl_str.reverse(hl.null(hl.tstr))) == None)
+
+    def test_strings_translate(self):
+        import hail.experimental.strings as hl_str
+        strs = [None, '', 'TATAN']
+        assert hl.eval(hl.literal(strs, 'array<str>').map(lambda x: hl_str.translate(x, {'T': 'A', 'A': 'T'}))) \
+            == [None, '', 'ATATN']
