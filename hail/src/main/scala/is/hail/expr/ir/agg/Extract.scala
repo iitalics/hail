@@ -293,6 +293,8 @@ object Extract {
       new CollectAsSetAggregator(PType.canonical(t))
     case AggSignature2(Collect(), _, Seq(t), _) =>
       new CollectAggregator(t.physicalType)
+    case AggSignature2(MkString(), _, Seq(TString(_)), _) =>
+      MkStringAggregator
     case _ => throw new UnsupportedExtraction(aggSig.toString)
   }
 

@@ -38,6 +38,7 @@ final case class Group() extends AggOp
 final case class AggElements() extends AggOp
 final case class AggElementsLengthCheck() extends AggOp
 final case class PrevNonnull() extends AggOp
+final case class MkString() extends AggOp
 
 // exists === map(p).sum, needs short-circuiting aggs
 // forall === map(p).product, needs short-circuiting aggs

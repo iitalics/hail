@@ -448,6 +448,16 @@ class Aggregators2Suite extends HailSuite {
     )
   }
 
+  @Test def testMkString() {
+    val aggSig = AggSignature2(MkString(), FastSeq(), FastSeq(TString()), None)
+    assertAggEquals(aggSig,
+      initArgs = FastIndexedSeq(), // TODO: put delimiter here
+      seqArgs = FastIndexedSeq(Str("H"), Str("ello"), Str(" "), Ref("arg", TString()), Str("?"), Str("!"))
+        .map(FastIndexedSeq[IR](_)),
+      expected = "Hello world?!",
+      args = FastIndexedSeq("arg" -> ((TString(), "world"))))
+  }
+
   @Test def testArrayElementsAgg() {
     val aggSigs = FastIndexedSeq(pnnAggSig, countAggSig, sumAggSig)
     val lcAggSig = AggSignature2(AggElementsLengthCheck(), FastSeq[Type](TVoid), FastSeq[Type](TInt32()), Some(aggSigs))
