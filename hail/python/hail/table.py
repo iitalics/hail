@@ -2025,6 +2025,36 @@ class Table(ExprContainer):
 
         return self.head(n).collect(_localize)
 
+    @typecheck_method(n=int, _localize=bool)
+    def last(self, n, _localize=True):
+        """Collect the last `n` rows of the table into a local list.
+
+        Examples
+        --------
+        Take the last three rows:
+
+        Notes
+        -----
+
+        This method does not need to look at all the data in the table, and
+        allows for fast queries of the end of the table.
+
+        This method is equivalent to :meth:`.Table.tail` followed by
+        :meth:`.Table.collect`.
+
+        Parameters
+        ----------
+        n : int
+            Number of rows to take.
+
+        Returns
+        -------
+        :obj:`list` of :class:`.Struct`
+            List of row structs.
+        """
+
+        return self.tail(n).collect(_localize)
+
     @typecheck_method(n=int)
     def head(self, n) -> 'Table':
         """Subset table to first `n` rows.
