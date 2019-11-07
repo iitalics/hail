@@ -14,6 +14,7 @@ object Streamify {
     case ArrayScan(a, z, an, en, b) => ArrayScan(apply(a), z, an, en, b)
     case ArrayAggScan(a, n, q) => ArrayAggScan(apply(a), n, q)
     case Let(n, v, b) => Let(n, v, apply(b))
+    case If(a, b, c) => If(a, apply(b), apply(c))
     case ir => ToStream(ir)
   }
 }

@@ -722,6 +722,23 @@ class IRSuite extends HailSuite {
     assertEvalsTo(If(True(), NA(TInt32()), I32(7)), null)
   }
 
+  @Test def testIfArray() {
+    val in = In(0, TBoolean())
+    for ((cond, xs) <- Seq(true, false, null) zip Seq(0 until 5, null)) {
+      assertEvalsTo(
+        If(in, ArrayRange(0, 5, 1), NA(TArray(TInt32()))),
+        expected = xs,
+        args = IndexedSeq(cond -> TBoolean()))
+    }
+    for ((cond, xs) <- Seq(true, false, null) zip Seq(1 to 5, 1 to 7, null)) {
+      assertEvalsTo(
+        ArrayMap(If(in, ArrayRange(0, 5, 1), ArrayRange(0, 7, 1)),
+          "x", Ref("x", TInt32()) + I32(1)),
+        expected = xs,
+        args = IndexedSeq(cond -> TBoolean()))
+    }
+  }
+
   @Test def testIfWithDifferentRequiredness() {
     val t = TStruct(true, "foo" -> TStruct("bar" -> TArray(TInt32Required, required = true)))
     val value = Row(Row(FastIndexedSeq(1, 2, 3)))
