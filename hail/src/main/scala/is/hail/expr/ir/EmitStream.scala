@@ -549,7 +549,6 @@ case class EmitStream(
     val state = sP.newLocals(mb)
 
     ArrayIteratorTriplet(
-      Code._empty,
       stream.length(state.load),
       (cont: (Code[Boolean], Code[_]) => Code[Unit]) => {
         val m = mb.newField[Boolean]("stream_missing")
@@ -576,7 +575,7 @@ case class EmitStream(
             loop(())
           }
 
-        EmitArrayTriplet(setup, Some(m), addElements)
+        EmitArrayTriplet(setup, m, addElements)
       })
   }
 }

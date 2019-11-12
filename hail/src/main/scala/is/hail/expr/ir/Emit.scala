@@ -113,21 +113,12 @@ case class EmitTriplet(setup: Code[Unit], m: Code[Boolean], v: Code[_]) {
   def value[T]: Code[T] = coerce[T](v)
 }
 
-case class EmitArrayTriplet(setup: Code[Unit], m: Option[Code[Boolean]], addElements: Code[Unit])
+case class EmitArrayTriplet(setup: Code[Unit], m: Code[Boolean], addElements: Code[Unit])
 
-case class ArrayIteratorTriplet(calcLength: Code[Unit], length: Option[Code[Int]], arrayEmitter: Emit.F => EmitArrayTriplet) {
+case class ArrayIteratorTriplet(length: Option[Code[Int]], arrayEmitter: Emit.F => EmitArrayTriplet) {
   def arrayEmitterFromBuilder(sab: StagedArrayBuilder): EmitArrayTriplet = {
     arrayEmitter( { (m: Code[Boolean], v: Code[_]) => m.mux(sab.addMissing(), sab.add(v)) } )
   }
-
-  def wrapContinuation(contMap: (Emit.F, Code[Boolean], Code[_]) => Code[Unit]): ArrayIteratorTriplet =
-    copy(calcLength = calcLength, length = length, arrayEmitter = { cont: Emit.F => arrayEmitter(contMap(cont, _, _)) })
-
-  def addSetup(setup: Code[Unit]): ArrayIteratorTriplet =
-    copy(calcLength = calcLength, length = length, arrayEmitter = { cont: Emit.F =>
-      val et = arrayEmitter(cont)
-      EmitArrayTriplet(Code(et.setup, setup), et.m, et.addElements)
-    })
 
   def toEmitTriplet(mb: MethodBuilder, aTyp: PArray): EmitTriplet = {
     val srvb = new StagedRegionValueBuilder(mb, aTyp)
@@ -143,8 +134,7 @@ case class ArrayIteratorTriplet(calcLength: Code[Unit], length: Option[Code[Int]
               srvb.advance()))
         }
         val processAElts = arrayEmitter(cont)
-        EmitTriplet(processAElts.setup, processAElts.m.getOrElse(const(false)), Code(
-          calcLength,
+        EmitTriplet(processAElts.setup, processAElts.m, Code(
           srvb.start(len, init = true),
           processAElts.addElements,
           srvb.offset
@@ -155,8 +145,7 @@ case class ArrayIteratorTriplet(calcLength: Code[Unit], length: Option[Code[Int]
         val i = mb.newLocal[Int]
         val vab = new StagedArrayBuilder(aTyp.elementType, mb, 16)
         val processArrayElts = arrayEmitter { (m: Code[Boolean], v: Code[_]) => m.mux(vab.addMissing(), vab.add(v)) }
-        EmitTriplet(Code(vab.clear, processArrayElts.setup), processArrayElts.m.getOrElse(const(false)), Code(
-          calcLength,
+        EmitTriplet(Code(vab.clear, processArrayElts.setup), processArrayElts.m, Code(
           processArrayElts.addElements,
           len := vab.size,
           srvb.start(len, init = true),
@@ -593,9 +582,8 @@ private class Emit(
           Code(
             vab.clear,
             processArrayElts.setup),
-          processArrayElts.m.getOrElse(const(false)),
+          processArrayElts.m,
           Code(
-            aout.calcLength,
             processArrayElts.addElements,
             compF,
             distinct,
@@ -683,9 +671,8 @@ private class Emit(
             ("i", (typeInfo[Long], eab.isMissing(i), eab.apply(i)))))
 
         val processArrayElts = aout.arrayEmitterFromBuilder(eab)
-        EmitTriplet(Code(eab.clear, processArrayElts.setup), processArrayElts.m.getOrElse(const(false)), Code(
+        EmitTriplet(Code(eab.clear, processArrayElts.setup), processArrayElts.m, Code(
           nab.clear,
-          aout.calcLength,
           processArrayElts.addElements,
           compF,
           sorter.pruneMissing,
@@ -759,20 +746,17 @@ private class Emit(
         }
 
         val processAElts = aBase.arrayEmitter(cont)
-        val marray = processAElts.m.getOrElse(const(false))
 
         EmitTriplet(Code(
           codeZ.setup,
           xmaccum := codeZ.m,
           xvaccum := xmaccum.mux(defaultValue(typ), codeZ.v),
           processAElts.setup,
-          marray.mux(
+          processAElts.m.mux(
             Code(
               xmaccum := true,
               xvaccum := defaultValue(typ)),
-            Code(
-              aBase.calcLength,
-              processAElts.addElements))),
+            processAElts.addElements)),
           xmaccum, xvaccum)
 
       case ArrayFold2(a, acc, valueName, seq, res) =>
@@ -811,7 +795,6 @@ private class Emit(
         }
 
         val processAElts = aBase.arrayEmitter(cont)
-        val marray = processAElts.m.getOrElse(const(false))
 
         val xresm = mb.newField[Boolean]
         val xresv = mb.newField(typeToTypeInfo(res.typ))
@@ -823,12 +806,11 @@ private class Emit(
             Code(xm := codeZ(i).m, xv.storeAny(xm.mux(defaultValue(acc(i)._2.typ), codeZ(i).v)))
           },
           processAElts.setup,
-          marray.mux(
+          processAElts.m.mux(
             Code(
               xresm := true,
               xresv.storeAny(defaultValue(res.typ))),
             Code(
-              aBase.calcLength,
               processAElts.addElements,
               codeR.setup,
               xresm := codeR.m,
@@ -852,13 +834,10 @@ private class Emit(
         }
 
         val processAElts = aBase.arrayEmitter(cont)
-        val ma = processAElts.m.getOrElse(const(false))
         EmitTriplet(
           Code(
             processAElts.setup,
-            ma.mux(
-              Code._empty,
-              Code(aBase.calcLength, processAElts.addElements))),
+            (!processAElts.m).orEmpty(processAElts.addElements)),
           const(false),
           Code._empty)
 
@@ -898,15 +877,12 @@ private class Emit(
                 codePerElt.setup)
             }
             val processAElts = aBase.arrayEmitter(cont)
-            val ma = processAElts.m.getOrElse(const(false))
 
             val aggregation = Code(
               aggSetup,
               codeInit.setup,
               processAElts.setup,
-              ma.mux(
-                Code._empty,
-                Code(aBase.calcLength, processAElts.addElements)),
+              (!processAElts.m).orEmpty(processAElts.addElements),
               postAgg.setup,
               resm := postAgg.m,
               resv.storeAny(resm.mux(defaultValue(query.pType), postAgg.value)),
@@ -942,7 +918,6 @@ private class Emit(
         }
 
         val processAElts = aBase.arrayEmitter(cont)
-        val ma = processAElts.m.getOrElse(const(false))
 
         val aggr = mb.newField[Long]("AGGR")
 
@@ -958,9 +933,7 @@ private class Emit(
             codeInit.setup,
             Code(
               processAElts.setup,
-              ma.mux(
-                Code._empty,
-                Code(aBase.calcLength, processAElts.addElements))),
+              (!processAElts.m).orEmpty(processAElts.addElements)),
             Code(
               rvb := Code.newInstance[RegionValueBuilder, Region](region),
               rvb.load().start(mb.fb.getPType(resultType)),
@@ -1810,12 +1783,11 @@ private class Emit(
 
         EmitTriplet(
           contextT.setup,
-          contextT.m.getOrElse(false),
+          contextT.m,
           Code(
             baos := Code.newInstance[ByteArrayOutputStream](),
             buf := cCodec.buildCodeOutputBuffer(baos), // TODO: take a closer look at whether we need two codec buffers?
             ctxab := Code.newInstance[ByteArrayArrayBuilder, Int](16),
-            contextAE.calcLength,
             contextT.addElements,
             baos.invoke[Unit]("reset"),
             addGlobals,
