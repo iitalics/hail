@@ -1,6 +1,6 @@
 package is.hail.expr.ir
 
-import is.hail.annotations.{Region, SafeRow, ScalaToRegionValue}
+import is.hail.annotations.{Region, SafeRow, ScalaToRegionValue, RegionValue}
 import is.hail.asm4s._
 import is.hail.asm4s.joinpoint._
 import is.hail.expr.types.physical._
@@ -14,9 +14,13 @@ import org.testng.annotations.Test
 
 class EmitStreamSuite extends HailSuite {
 
-  private def compileStream(streamIR: IR, inputPType: PType): Any => IndexedSeq[Any] = {
+  private def compileStream(
+    streamIR: IR,
+    inputPType: PType,
+    buildEnv: EmitFunctionBuilder[_] => Emit.E = (_ => Env.empty)
+  ): Any => IndexedSeq[Any] = {
     val fb = EmitFunctionBuilder[Region, Long, Boolean, Long]("eval_stream")
-    val stream = EmitStream(fb, streamIR)
+    val stream = EmitStream(fb, streamIR, buildEnv(fb))
     val eltPType = stream.elementType
     fb.emit {
       val ait = stream.toArrayIterator(fb.apply_method)
@@ -37,8 +41,11 @@ class EmitStreamSuite extends HailSuite {
     } })
   }
 
-  private def evalStream(streamIR: IR): IndexedSeq[Any] =
-    compileStream(streamIR, PStruct.empty())(null)
+  private def evalStream(
+    streamIR: IR,
+    buildEnv: EmitFunctionBuilder[_] => Emit.E = (_ => Env.empty)
+  ): IndexedSeq[Any] =
+    compileStream(streamIR, PStruct.empty(), buildEnv)(null)
 
   private def evalStreamLen(streamIR: IR): Option[Int] = {
     val fb = EmitFunctionBuilder[Region, Int]("eval_stream_len")
@@ -297,5 +304,37 @@ class EmitStreamSuite extends HailSuite {
       FastIndexedSeq(2, 5, 8, -3, 2, 2, 1, 0, 0) ->
         IndexedSeq(null, 0L, 2L, 7L, 15L, 15L, 15L, 16L, 17L)
     )
+  }
+
+  @Test def testEmitFromIterator() {
+    def buildEnv(fb: EmitFunctionBuilder[_]): Emit.E = {
+      val makeIter = Code.invokeScalaObject[Region, Iterator[RegionValue]](
+        EmitStreamSuite.getClass, "makeIter", fb.partitionRegion)
+      Env("iter" -> ((typeInfo[Iterator[RegionValue]], false, makeIter)))
+    }
+    val iter = Ref("iter", EmitStreamSuite.iterType)
+    val elt = Ref("elt", EmitStreamSuite.iterElemType)
+    val elt0 = GetFieldByIdx(elt, 0)
+    assert(
+      evalStream(
+        ArrayMap(ArrayFlatMap(ArrayFilter(iter, "elt", elt0 > 0), "_", iter),
+          "elt", elt0),
+        buildEnv)
+      == (1 until 5).flatMap(_ => 0 until 5))
+  }
+}
+
+object EmitStreamSuite {
+  val iterElemType = TTuple(TInt32Required)
+  val iterElemPType = iterElemType.physicalType
+  val iterType = TStream(iterElemType)
+
+  def makeIter(r: Region): Iterator[RegionValue] = {
+    val rv = RegionValue()
+    (0 until 5).iterator.map { x =>
+      rv.set(r, iterElemPType.allocate(r))
+      Region.storeInt(rv.offset, x)
+      rv
+    }
   }
 }

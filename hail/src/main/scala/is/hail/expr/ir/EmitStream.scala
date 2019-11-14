@@ -4,9 +4,11 @@ import is.hail.utils._
 import is.hail.asm4s._
 import is.hail.asm4s.joinpoint._
 import is.hail.expr.types.physical._
-import is.hail.annotations.{Region, StagedRegionValueBuilder}
+import is.hail.expr.types.virtual.TStream
+import is.hail.annotations.{Region, RegionValue, StagedRegionValueBuilder}
 
 import scala.language.existentials
+import scala.reflect.ClassTag
 
 object EmitStream {
   sealed trait Init[+S]
@@ -305,6 +307,27 @@ object EmitStream {
     }
   }
 
+  def fromIterator[A <: AnyRef : ClassTag]: Parameterized[Code[Iterator[A]], Code[A]] =
+    new Parameterized[Code[Iterator[A]], Code[A]] {
+      type S = Code[Iterator[A]]
+      val stateP: ParameterPack[S] = implicitly
+      val name = "iter"
+      def emptyState: S = Code.invokeScalaObject[Iterator[Nothing]](Iterator.getClass, "empty")
+      def length(s0: S): Option[Code[Int]] = None
+
+      def init(mb: MethodBuilder, jb: JoinPointBuilder, iter: S)(
+        k: Init[S] => Code[Ctrl]
+      ): Code[Ctrl] =
+        k(Start(iter))
+
+      def step(mb: MethodBuilder, jb: JoinPointBuilder, iter: S)(
+        k: Step[Code[A], S] => Code[Ctrl]
+      ): Code[Ctrl] =
+        iter.hasNext.mux(
+          ParameterPack.let(mb, iter.next()) { elt => k(Yield(elt, iter)) },
+          k(EOS))
+    }
+
   private[ir] def apply(
     emitter: Emit,
     streamIR0: IR,
@@ -324,6 +347,17 @@ object EmitStream {
       streamIR match {
         case NA(_) =>
           missing
+
+        case (_: Ref | _: In) if streamIR.typ.isInstanceOf[TStream] =>
+          val EmitTriplet(_, m, v) = emitIR(streamIR, env)
+          val t = streamIR.typ.asInstanceOf[TStream].elementType
+          fromIterator[RegionValue]
+            .map { (rv: Code[RegionValue]) =>
+              present(Region.loadIRIntermediate(t.physicalType)(rv.invoke[Long]("getOffset")))
+            }
+            .guardParam { (_, k) =>
+              m.mux(k(None), k(Some(coerce[Iterator[RegionValue]](v))))
+            }
 
         case MakeStream(elements, t) =>
           val e = t.elementType.physicalType
@@ -543,8 +577,8 @@ object EmitStream {
       streamIR0.pType.asInstanceOf[PStreamable].elementType)
   }
 
-  def apply(fb: EmitFunctionBuilder[_], ir: IR): EmitStream =
-    apply(new Emit(fb.apply_method, 1), ir, Env.empty,
+  def apply(fb: EmitFunctionBuilder[_], ir: IR, env: Emit.E = Env.empty): EmitStream =
+    apply(new Emit(fb.apply_method, 1), ir, env,
       None, EmitRegion.default(fb.apply_method), None)
 }
 
