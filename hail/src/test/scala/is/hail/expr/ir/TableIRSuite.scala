@@ -498,4 +498,46 @@ class TableIRSuite extends HailSuite {
 
     assert(testTable.globals == texp.globals)
   }
+
+  @Test def testTableMapPartitions() {
+    implicit val execStrats: Set[ExecStrategy] =
+      Set(ExecStrategy.Interpret, ExecStrategy.InterpretUnoptimized)
+
+    val rowType = TStruct("idx" -> TInt32())
+    val child = Ref("child", TStream(rowType))
+    val row = Ref("row", rowType)
+    val rowIdx = GetField(row, "idx")
+
+    val t0 = TableKeyBy(TableRange(20, nPartitions = 4), IndexedSeq(), false)
+
+    assertEvalsTo(
+      collect(
+        TableMapPartitions(
+          TableMapPartitions(t0, "child",
+            ArrayFilter(child, "row", rowIdx > 5)),
+          "child",
+          ArrayMap(
+            ArrayFlatMap(
+              child,
+              "row",
+              MakeStream(Seq(rowIdx * 2, rowIdx * 2 + 1), TStream(TInt32()))),
+            "x",
+            MakeStruct(Seq("idx" -> Ref("x", TInt32())))))),
+      Row(
+        (0 until 20)
+          .filter(_ > 5)
+          .flatMap { idx => Seq(idx * 2, idx * 2 + 1) }
+          .map(Row(_)),
+        Row()))
+
+    assertEvalsTo(
+      collect(TableMapPartitions(t0, "ignored",
+        ArrayMap(
+          StreamRange(0, 7, 1),
+          "i",
+          MakeStruct(Seq("idx" -> Ref("i", TInt32())))))),
+      Row(
+        IndexedSeq.tabulate(7 * 4) { i => Row(i % 7) }, // 4 partitions
+        Row()))
+  }
 }
