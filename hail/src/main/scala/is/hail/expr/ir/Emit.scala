@@ -1906,11 +1906,12 @@ private class Emit(
   }
 
   private def emitArrayIterator(ir: IR, env: E, er: EmitRegion, container: Option[AggContainer]): ArrayIteratorTriplet =
-    Streamify(ir) match {
-      case ToStream(x) =>
-        emitOldArrayIterator(x, env, er, container)
-      case x => EmitStream(this, x, env, er, container).toArrayIterator(mb)
-    }
+    /*Streamify(ir) match {
+      case ToStream(x) => */
+        emitOldArrayIterator(ir, env, er, container)
+      /*case x =>
+        EmitStream(this, x, env, er, container).toArrayIterator(mb)
+    }*/
 
   private def emitOldArrayIterator(ir: IR, env: E, er: EmitRegion, container: Option[AggContainer]): ArrayIteratorTriplet = {
     def emit(ir: IR, env: E = env) = this.emit(ir, env, er, container, None)
